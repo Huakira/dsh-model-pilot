@@ -410,15 +410,21 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
             const existing = next[sid]?.models ?? [];
             // Keep hand-moved models (moves entry without auto) already there.
             const handMoved = existing.filter((m) => moves[`${sid}/${m.id}`]?.auto !== true && !carried.some((c) => c.id === m.id));
-            const shard = next[sid] ?? {
-              displayName: `${route.displayName ?? routeId} · ${plan.shardProtocols[sid]}`,
+            // A shard inherits the parent route's transport settings (headers,
+            // thinkingBudgets, default*, compat, image budgets, …) and only
+            // overrides the protocol-scoped fields. Creating a route with a bare
+            // 4-field object silently dropped everything else the user had tuned
+            // on the parent, and the settings seam replaced the whole section,
+            // so the loss was permanent.
+            const { displayName: _parentName, ...inherited } = route as Record<string, unknown>;
+            const shard: ProviderRoute = {
+              ...(structuredClone(inherited) as ProviderRoute),
+              ...next[sid],
+              displayName: next[sid]?.displayName ?? `${route.displayName ?? routeId} · ${plan.shardProtocols[sid]}`,
               api: plan.shardProtocols[sid],
               baseURL: shardBaseURL(plan.shardProtocols[sid], route.baseURL),
-              apiKeyEnv: route.apiKeyEnv,
+              apiKeyEnv: next[sid]?.apiKeyEnv ?? route.apiKeyEnv,
             };
-            shard.api = plan.shardProtocols[sid];
-            shard.baseURL = shardBaseURL(plan.shardProtocols[sid], route.baseURL);
-            shard.apiKeyEnv = shard.apiKeyEnv ?? route.apiKeyEnv;
             shard.models = [...handMoved, ...carried];
             next[sid] = shard;
             for (const m of carried) {
@@ -667,11 +673,14 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         }
 
         const mirrorId = `${routeId}-${moveTo}`;
-        const mirror = next[mirrorId] ?? {
-          displayName: `${source.displayName ?? routeId} · ${moveTo}`,
+        const { displayName: _srcName, ...srcInherited } = source as Record<string, unknown>;
+        const mirror: ProviderRoute = {
+          ...(structuredClone(srcInherited) as ProviderRoute),
+          ...next[mirrorId],
+          displayName: next[mirrorId]?.displayName ?? `${source.displayName ?? routeId} · ${moveTo}`,
           api: moveTo as Protocol,
-          baseURL: source.baseURL,
-          apiKeyEnv: source.apiKeyEnv,
+          baseURL: next[mirrorId]?.baseURL ?? source.baseURL,
+          apiKeyEnv: next[mirrorId]?.apiKeyEnv ?? source.apiKeyEnv,
         };
         // Same wire format? A completions→responses move changes the listing
         // protocol too; models are hand-carried so no re-listing here.
