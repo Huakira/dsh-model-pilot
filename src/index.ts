@@ -14,7 +14,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { loadPiAiCatalog, type CatalogIndex } from "./catalog.js";
 import { matchModel } from "./matcher.js";
 import { routeProtocol, suggestProtocol, compatFor } from "./protocol.js";
-import { planProtocolSplit, shardBaseURL } from "./split.js";
+import { planProtocolSplit, shardRoute } from "./split.js";
 import { Writer, readProviders, extractSupportedProtocols, PI_AI_NS } from "./writer.js";
 import { fetchGeminiListing, probeModel, probeProtocolEndpoint, GEMINI_DEFAULT_INPUT } from "./fetchers.js";
 import { ModelsDevSource } from "./modelsdev.js";
@@ -416,15 +416,13 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
             // 4-field object silently dropped everything else the user had tuned
             // on the parent, and the settings seam replaced the whole section,
             // so the loss was permanent.
-            const { displayName: _parentName, ...inherited } = route as Record<string, unknown>;
-            const shard: ProviderRoute = {
-              ...(structuredClone(inherited) as ProviderRoute),
-              ...next[sid],
-              displayName: next[sid]?.displayName ?? `${route.displayName ?? routeId} · ${plan.shardProtocols[sid]}`,
-              api: plan.shardProtocols[sid],
-              baseURL: shardBaseURL(plan.shardProtocols[sid], route.baseURL),
-              apiKeyEnv: next[sid]?.apiKeyEnv ?? route.apiKeyEnv,
-            };
+            const shard = shardRoute({
+              parent: route,
+              parentId: routeId,
+              shardId: sid,
+              protocol: plan.shardProtocols[sid],
+              existing: next[sid],
+            });
             shard.models = [...handMoved, ...carried];
             next[sid] = shard;
             for (const m of carried) {
@@ -673,15 +671,13 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         }
 
         const mirrorId = `${routeId}-${moveTo}`;
-        const { displayName: _srcName, ...srcInherited } = source as Record<string, unknown>;
-        const mirror: ProviderRoute = {
-          ...(structuredClone(srcInherited) as ProviderRoute),
-          ...next[mirrorId],
-          displayName: next[mirrorId]?.displayName ?? `${source.displayName ?? routeId} · ${moveTo}`,
-          api: moveTo as Protocol,
-          baseURL: next[mirrorId]?.baseURL ?? source.baseURL,
-          apiKeyEnv: next[mirrorId]?.apiKeyEnv ?? source.apiKeyEnv,
-        };
+        const mirror = shardRoute({
+          parent: source,
+          parentId: routeId,
+          shardId: mirrorId,
+          protocol: moveTo as Protocol,
+          existing: next[mirrorId],
+        });
         // Same wire format? A completions→responses move changes the listing
         // protocol too; models are hand-carried so no re-listing here.
         const stripped = { ...model };

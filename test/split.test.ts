@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planProtocolSplit, shardBaseURL } from "../src/split.js";
+import { planProtocolSplit, shardBaseURL, shardRoute } from "../src/split.js";
 import { suggestProtocol, compatFor } from "../src/protocol.js";
 import type { StoredModel } from "../src/types.js";
 
@@ -109,5 +109,54 @@ describe("suggestProtocol mapping (user's gateway convention)", () => {
   ];
   it.each(cases)("%s → %s", (id, protocol) => {
     expect(suggestProtocol(id)).toBe(protocol);
+  });
+});
+
+describe("shardRoute (regression: shards must inherit parent settings)", () => {
+  const parent = {
+    displayName: "hub",
+    api: "openai-completions" as const,
+    baseURL: "https://gw.example/v1",
+    apiKeyEnv: "GW_KEY",
+    models: [{ id: "glm-5.3-flash" }],
+    headers: { "x-tenant": "huake" },
+    thinkingBudgets: { high: 8000 },
+    defaultContextWindow: 1000000,
+    defaultMaxTokens: 128000,
+    defaultInput: ["text" as const],
+    compat: { chatTemplateKwargs: {} },
+    streamIdleTimeoutMs: 300000,
+    maxRequestImages: 50,
+    modelOverrides: { "glm-5.3-flash": { maxTokens: 9000 } },
+  };
+
+  it("inherits every parent transport setting, not just the four basics", () => {
+    const s = shardRoute({ parent, parentId: "gw", shardId: "gw-openai-responses", protocol: "openai-responses" });
+    for (const key of ["headers", "thinkingBudgets", "defaultContextWindow", "defaultMaxTokens", "defaultInput", "compat", "streamIdleTimeoutMs", "maxRequestImages", "modelOverrides"]) {
+      expect(s[key], key).toEqual(parent[key as keyof typeof parent]);
+    }
+    expect(s.apiKeyEnv).toBe("GW_KEY");
+  });
+
+  it("overrides only protocol-scoped fields", () => {
+    const s = shardRoute({ parent, parentId: "gw", shardId: "gw-anthropic-messages", protocol: "anthropic-messages" });
+    expect(s.api).toBe("anthropic-messages");
+    expect(s.baseURL).toBe("https://gw.example"); // anthropic SDK prefixes /v1 itself
+    expect(s.displayName).toBe("hub · anthropic-messages");
+  });
+
+  it("does not alias the parent's objects (a shard edit must not mutate the parent)", () => {
+    const s = shardRoute({ parent, parentId: "gw", shardId: "gw-openai-responses", protocol: "openai-responses" });
+    (s.headers as Record<string, string>)["x-tenant"] = "changed";
+    expect((parent.headers as Record<string, string>)["x-tenant"]).toBe("huake");
+  });
+
+  it("keeps a user's per-shard edits across a refresh", () => {
+    const existing = { displayName: "my shard", apiKeyEnv: "OTHER_KEY", streamIdleTimeoutMs: 60000 };
+    const s = shardRoute({ parent, parentId: "gw", shardId: "gw-openai-responses", protocol: "openai-responses", existing });
+    expect(s.displayName).toBe("my shard");
+    expect(s.apiKeyEnv).toBe("OTHER_KEY");
+    expect(s.streamIdleTimeoutMs).toBe(60000);
+    expect(s.headers).toEqual(parent.headers); // still inherits what it has no opinion on
   });
 });

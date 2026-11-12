@@ -8,7 +8,7 @@
  * which shares the same baseURL + key. This module is the pure planning step so
  * the rule is unit-testable without the settings seam.
  */
-import type { ModelCapability, Protocol, StoredModel } from "./types.js";
+import type { ModelCapability, Protocol, ProviderRoute, StoredModel } from "./types.js";
 
 export interface ProtocolMove {
   to: string;
@@ -96,4 +96,36 @@ export function shardBaseURL(protocol: Protocol | string, baseURL: string | unde
   const trimmed = baseURL.replace(/\/+$/, "");
   if (protocol === "anthropic-messages") return trimmed.replace(/\/v1$/i, "");
   return trimmed;
+}
+
+/**
+ * Build a protocol shard route from its parent.
+ *
+ * A shard is the SAME provider on a different wire protocol, so it must inherit
+ * the parent's transport settings (headers, thinkingBudgets, compat, default*,
+ * image budgets, modelOverrides, …). Only the protocol-scoped fields are
+ * overridden, and an existing shard's own values win so a user's per-shard edit
+ * survives a refresh.
+ *
+ * Creating a shard as a bare 4-field object used to silently drop all of that,
+ * and because the settings seam REPLACES the whole providers section the loss
+ * was permanent — this is the "provider settings disappeared" regression.
+ */
+export function shardRoute(input: {
+  parent: ProviderRoute;
+  parentId: string;
+  shardId: string;
+  protocol: Protocol;
+  existing?: ProviderRoute;
+}): ProviderRoute {
+  const { parent, parentId, protocol, existing } = input;
+  const { displayName: _parentName, ...inherited } = parent as Record<string, unknown>;
+  return {
+    ...(structuredClone(inherited) as ProviderRoute),
+    ...existing,
+    displayName: existing?.displayName ?? `${parent.displayName ?? parentId} · ${protocol}`,
+    api: protocol,
+    baseURL: shardBaseURL(protocol, parent.baseURL),
+    apiKeyEnv: existing?.apiKeyEnv ?? parent.apiKeyEnv,
+  };
 }

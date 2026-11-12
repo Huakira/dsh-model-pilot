@@ -254,3 +254,36 @@ docs/             本文
 - 逐条实测：minimax-m3.1-flash 走 `/v1/messages` 200 ✓、LongCat 走 `/v1/responses` 200 ✓、muse 走 responses 200 ✓、claude×4 走 anthropic ✓。grok 仍额度耗尽、gpt-6-astra 仍上游 model not found（与协议无关）。
 - LongCat 保留手工移入状态（非 auto），因此其 off:"none" 等手工调过的能力不会在自动重排中被覆盖。
 - 版本 0.1.18 → 0.1.19（commit 93b165b）。
+
+## 0.1.20 / 0.1.21 — 修复「provider 配置被改没」（2026-11-12）
+
+### 用户报告
+m01448「怎么老是把provider改没了 你不能好好检查一下代码」。
+
+### 根因（对照备份逐字段比对，非推测）
+建协议分流 shard 时只写了 4 个字段：
+```ts
+const shard = next[sid] ?? { displayName, api, baseURL, apiKeyEnv };
+```
+父路由 axonhub 实际有 16 个非 models 字段。shard 因此丢掉 12 项：
+`headers`、`thinkingBudgets`、`compat`、`defaultContextWindow`、`defaultMaxTokens`、`defaultInput`、`modelOverrides`、`streamIdleTimeoutMs`、`maxRequestImageBytes`、`maxRequestImages`、`requestImagePixelBudget`、`requestImageMaxBytes`。
+
+**为什么是永久丢失**：`writer.writeProviders` 用 `settings.replace(PI_AI_NS, { providers: payload })` 整段替换（不是 merge，因为要能删路由），所以少写的字段不会被保留。两处都有此 bug：refreshRoutes 的自动分流、override 端点的手动移动。
+
+对照数据（备份 `bk-1794506509304-90ryqe` vs 当时 live）：
+- axonhub：16 字段 → 16 字段（未受影响，它是源路由）
+- axonhub-openai-responses：16 → **4**
+- axonhub-anthropic-messages：16 → **4**
+
+### 修复
+- 抽出纯函数 `shardRoute({ parent, parentId, shardId, protocol, existing })`（`src/split.ts`）：深拷贝继承父路由全部字段 → 叠加 existing shard 自身值（保住用户对 shard 的单独调整）→ 只覆盖 api / baseURL / displayName / apiKeyEnv。两处调用点统一走它。
+- 4 条回归测试钉住：全字段继承、只覆盖协议相关字段、不共享对象引用（改 shard 不污染父）、existing 值优先。共 84 测试全过。
+
+### 线上数据修复
+从备份恢复两条 shard 的 12 个字段（models[] 保留刷新后的真实列表），并：
+- 去重 LongCat：网关同时列 `LongCat-2.5` 与 `longcat-2.5`，是同一上游模型；保留用户调过的那条（ctx 1048576 / max 262144），清掉 `axonhub/longcat-2.5` 的 move。
+- 修 YAML：`'false': none` → `"off": none`（裸 off 被 YAML 1.1 解析成 bool，schema 报 `expected false | { [key: "off"|"minimal"|...] }`）。
+- Config schema 校验通过：3 路由各 16 字段，15 / 5 / 7 个模型；重启 seams 全 true、GUI 200、无 read-back mismatch。
+
+### 教训
+改 settings 段落时不能只写「我知道的字段」——replace 语义下漏写即删除。新增路由一律从父路由深拷贝起步。
