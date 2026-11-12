@@ -236,3 +236,21 @@ docs/             本文
 
 ### 版本流水
 - 0.1.17 → 0.1.18（commit 555b9a1），68 测试全过（新增 split 单测 11 条）。
+
+## 0.1.19 — 家族→协议映射按用户网关约定定稿（2026-11-12）
+
+用户给定的映射（覆盖此前按"通用厂商习惯"的推断）：
+
+| 家族 | 协议 |
+|---|---|
+| claude、minimax | anthropic-messages |
+| gpt、grok、muse、longcat | openai-responses |
+| 其余（glm、qwen、kimi、deepseek、step、dots、mimo…） | openai-completions |
+| gemini | 建议 gemini 协议；适配器没实现时留在原路由（= completions） |
+
+- `familyOf` 新增 muse（`/(^|\/)muse[-.]/`）与 longcat 两个桶；`suggestProtocol` 按上表重写；`thinkingFormatFor` 给 longcat 补 deepseek 走线（万一落在 completions 上）。
+- 映射有单测钉住（`test/split.test.ts` 的 `suggestProtocol mapping` 12 条），共 80 测试全过。
+- 线上重排结果（axonhub，重启生效）：completions 17、responses 5（muse/grok/gpt-6-astra/gpt-6.1-sol/LongCat）、anthropic 6（minimax×2 + claude×4）。
+- 逐条实测：minimax-m3.1-flash 走 `/v1/messages` 200 ✓、LongCat 走 `/v1/responses` 200 ✓、muse 走 responses 200 ✓、claude×4 走 anthropic ✓。grok 仍额度耗尽、gpt-6-astra 仍上游 model not found（与协议无关）。
+- LongCat 保留手工移入状态（非 auto），因此其 off:"none" 等手工调过的能力不会在自动重排中被覆盖。
+- 版本 0.1.18 → 0.1.19（commit 93b165b）。
