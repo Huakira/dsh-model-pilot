@@ -1,0 +1,7 @@
+# Applied by the profile composer (dsh.bundle.patch) when this package is added
+# to a profile. Mounts the host half so the browser scanner discovers
+# `dsh.client` and serves `lib/client.js` as
+# `/plugins/dsh-model-pilot/client.js`.
+- insert:
+    - id: dsh-model-pilot
+      name: dsh-model-pilot
