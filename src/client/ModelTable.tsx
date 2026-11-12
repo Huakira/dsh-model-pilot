@@ -28,17 +28,25 @@ export function MatchBadge({ info }: { info: MatchInfoView | undefined }) {
   return <span title={title} style={{ ...styles.badge, ...toneStyle, marginLeft: 6 }}>{b.label}</span>;
 }
 
-export function ModelTable({ models, matchinfo, onOverride }: {
+export function ModelTable({ models, matchinfo, onOverride, compact = false }: {
   models: ModelView[];
   matchinfo: Record<string, MatchInfoView> | undefined;
   onOverride: (model: ModelView) => void;
+  /** Narrow variant for the Models-page provider-card seat. */
+  compact?: boolean;
 }): React.ReactElement {
+  const modelCell: React.CSSProperties = compact
+    ? { ...styles.td, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+    : styles.td;
+  const actionCell: React.CSSProperties = compact
+    ? { ...styles.td, width: 1, whiteSpace: "nowrap" }
+    : styles.td;
   return (
     <table style={styles.table}>
       <thead>
         <tr>
-          <th style={styles.th}>{t("model")}</th>
-          <th style={styles.th}>{t("contextWindow")}</th>
+          <th style={{ ...styles.th, maxWidth: compact ? 220 : undefined }}>{t("model")}</th>
+          {!compact && <th style={styles.th}>{t("contextWindow")}</th>}
           <th style={styles.th}>{t("maxTokens")}</th>
           <th style={styles.th}>{t("input")}</th>
           <th style={styles.th}>{t("efforts")}</th>
@@ -49,22 +57,22 @@ export function ModelTable({ models, matchinfo, onOverride }: {
       <tbody>
         {(models ?? []).map((m) => (
           <tr key={m.id}>
-            <td style={styles.td}>
+            <td style={modelCell}>
               {m.name || m.id}
               {m.stale ? <span style={{ ...styles.badge, ...styles.badgeWarn, marginLeft: 6 }}>{t("stale")}</span> : null}
               <MatchBadge info={matchinfo?.[m.id]} />
               <div style={styles.muted}>{m.id}</div>
             </td>
-            <td style={styles.td}>{m.contextWindow?.toLocaleString() ?? "—"}</td>
+            {!compact && <td style={styles.td}>{m.contextWindow?.toLocaleString() ?? "—"}</td>}
             <td style={styles.td}>{m.maxTokens?.toLocaleString() ?? "—"}</td>
             <td style={styles.td}>{(m.input ?? []).join(", ") || "—"}</td>
             <td style={styles.td}>{effortsLabel(m.reasoningEfforts)}</td>
             <td style={styles.td}>{String(m.compat?.thinkingFormat ?? "—")}</td>
-            <td style={styles.td}><button style={styles.btn} onClick={() => onOverride(m)}>{t("override")}</button></td>
+            <td style={actionCell}><button style={styles.btn} onClick={() => onOverride(m)}>{t("override")}</button></td>
           </tr>
         ))}
         {(models ?? []).length === 0 && (
-          <tr><td style={styles.td} colSpan={7}>{t("noModels")}</td></tr>
+          <tr><td style={styles.td} colSpan={compact ? 6 : 7}>{t("noModels")}</td></tr>
         )}
       </tbody>
     </table>

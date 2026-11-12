@@ -54,6 +54,8 @@ const en: Record<string, string> = {
   pilotManaged: "Model Pilot",
   pilotFooterHint: "Model Pilot keeps these routes' model capabilities auto-matched from official sources.",
   openFullSettings: "Open Model Pilot settings",
+  openFullSettingsShort: "Settings → Model Pilot",
+  openFullSettingsHint: "Add / remove providers and manage backups in Settings → Model Pilot.",
 };
 
 const zh: Record<string, string> = {
@@ -111,6 +113,8 @@ const zh: Record<string, string> = {
   pilotManaged: "模型领航",
   pilotFooterHint: "模型领航持续从官方源自动匹配这些路由的模型能力。",
   openFullSettings: "打开模型领航设置",
+  openFullSettingsShort: "设置 → 模型领航",
+  openFullSettingsHint: "在「设置 → 模型领航」里添加/删除 provider、管理备份。",
 };
 
 function pick(): Record<string, string> {

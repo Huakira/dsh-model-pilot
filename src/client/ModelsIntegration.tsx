@@ -21,6 +21,8 @@ interface ProviderCardOwnerProps {
   provider: { provider: string; displayName: string; settingsNs: string };
   configured: boolean;
   keyConfigured: boolean;
+  /** Present on some DSH builds; absent on 0.2.2-rc.1. */
+  openSettings?: () => void;
 }
 
 function usePilotState(): { state: StateResponse | null; busy: boolean; run: (fn: () => Promise<unknown>, ok: string) => Promise<void>; toast: { msg: string; err?: boolean } | null } {
@@ -70,13 +72,20 @@ export function ProviderCardPilot(props: ProviderCardOwnerProps): React.ReactEle
           <span style={styles.muted}>{p.api} · {p.modelCount} {t("models")}</span>
         </div>
         <div style={styles.row}>
+          {props.openSettings
+            ? <a
+                href="#"
+                style={{ ...styles.muted, textDecoration: "underline", cursor: "pointer" }}
+                onClick={(e) => { e.preventDefault(); props.openSettings?.(); }}
+              >{t("openFullSettings")}</a>
+            : <span style={styles.muted} title={t("openFullSettingsHint")}>{t("openFullSettingsShort")}</span>}
           <button style={styles.btn} disabled={busy} onClick={() => run(() => api.refresh([routeId]), t("ok"))}>{t("refresh")}</button>
           <button style={styles.btn} onClick={() => setExpanded((e) => !e)}>{expanded ? "▾" : "▸"} {t("models")}</button>
         </div>
       </div>
       {toast && <div style={toast.err ? styles.toastErr : styles.toast}>{toast.msg}</div>}
       {expanded && (
-        <ModelTable models={p.models ?? []} matchinfo={matchinfo} onOverride={(m) => setOverrideTarget(m)} />
+        <ModelTable models={p.models ?? []} matchinfo={matchinfo} onOverride={(m) => setOverrideTarget(m)} compact />
       )}
       {overrideTarget && (
         <OverrideForm
