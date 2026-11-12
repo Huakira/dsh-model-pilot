@@ -13,9 +13,10 @@ import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { loadPiAiCatalog, type CatalogIndex } from "./catalog.js";
 import { matchModel } from "./matcher.js";
-import { routeProtocol } from "./protocol.js";
+import { routeProtocol, suggestProtocol, compatFor } from "./protocol.js";
+import { planProtocolSplit, shardBaseURL } from "./split.js";
 import { Writer, readProviders, extractSupportedProtocols, PI_AI_NS } from "./writer.js";
-import { fetchGeminiListing, probeModel, GEMINI_DEFAULT_INPUT } from "./fetchers.js";
+import { fetchGeminiListing, probeModel, probeProtocolEndpoint, GEMINI_DEFAULT_INPUT } from "./fetchers.js";
 import { ModelsDevSource } from "./modelsdev.js";
 import {
   DEFAULT_OPTIONS,
@@ -46,6 +47,7 @@ export const Config = Schema.object({
   autoRefresh: Schema.boolean().default(false),
   refreshIntervalHours: Schema.natural().min(1).default(24),
   backupKeep: Schema.natural().min(1).default(10),
+  autoProtocolSplit: Schema.boolean().default(true),
 });
 
 interface PilotConfig {
@@ -55,6 +57,7 @@ interface PilotConfig {
   autoRefresh: boolean;
   refreshIntervalHours: number;
   backupKeep: number;
+  autoProtocolSplit: boolean;
 }
 
 /** Minimal connection fetch seam (structural). */
@@ -104,6 +107,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     autoRefresh: config.autoRefresh ?? false,
     refreshIntervalHours: config.refreshIntervalHours ?? 24,
     backupKeep: config.backupKeep ?? 10,
+    autoProtocolSplit: config.autoProtocolSplit ?? true,
   };
 
   const settings = ctx.settings as SettingsSeam | undefined;
@@ -301,6 +305,36 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     return { models, added, kept, matchinfo };
   }
 
+  /**
+   * Which wire protocols this route's endpoint actually answers. Cached per
+   * baseURL for 12h so refresh stays cheap. Splitting a model onto a protocol
+   * the gateway does not serve would break a model that currently works.
+   */
+  async function verifiedProtocols(
+    baseURL: string,
+    apiKey: string | undefined,
+    candidates: string[],
+  ): Promise<string[]> {
+    const meta = loadMeta();
+    const cache = (meta.protocolProbe ?? {}) as Record<string, Record<string, { ok: boolean; at: number }>>;
+    const entry = (cache[baseURL] ??= {});
+    const now = Date.now();
+    const out: string[] = [];
+    for (const protocol of candidates) {
+      const hit = entry[protocol];
+      if (hit && now - hit.at < 12 * 60 * 60 * 1000) {
+        if (hit.ok) out.push(protocol);
+        continue;
+      }
+      const ok = await probeProtocolEndpoint(protocol as Protocol, baseURL, apiKey).catch(() => false);
+      entry[protocol] = { ok, at: now };
+      if (ok) out.push(protocol);
+    }
+    meta.protocolProbe = cache;
+    saveMeta(meta);
+    return out;
+  }
+
   async function refreshRoutes(routeIds: string[] | undefined, reason: string): Promise<Record<string, unknown>> {
     if (!seams.settings) throw new Error("settings seam unavailable");
     await catalogReady;
@@ -314,6 +348,10 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     const next = structuredClone(providers);
     const perRoute: Record<string, unknown> = {};
     const matchinfoAll = loadMatchInfo();
+    // Recorded protocol moves live across the whole refresh; load once so one
+    // route's plan does not clobber another's.
+    const metaState = loadMeta();
+    const movesAll = (metaState.moves ?? {}) as Record<string, { to: string; protocol: string; auto?: boolean; pinned?: boolean }>;
 
     for (const routeId of targets) {
       const route = next[routeId];
@@ -334,14 +372,63 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         let { models, added, kept, matchinfo } = buildModels(routeId, route, listing, overrides);
         // Re-apply recorded protocol moves: a moved model must not reappear on
         // the source route even though the listing still advertises it.
-        const meta = loadMeta();
-        const moves = (meta.moves ?? {}) as Record<string, { to: string; protocol: string }>;
-        const movedOut = Object.entries(moves).filter(([k]) => k.startsWith(routeId + "/")).map(([k]) => k.slice(routeId.length + 1));
+        const moves = movesAll;
+        const movedOut = Object.entries(moves)
+          .filter(([k, v]) => k.startsWith(routeId + "/") && v.to !== routeId)
+          .map(([k]) => k.slice(routeId.length + 1));
         if (movedOut.length > 0) {
           const gone = new Set(movedOut);
           models = models.filter((m) => !gone.has(m.id));
           for (const id of movedOut) { delete (matchinfo as Record<string, unknown>)[`${routeId}/${id}`]; }
         }
+
+        // Per-model protocol matching: pi-ai binds one protocol per route, so a
+        // model whose family speaks another wire protocol is carried onto a
+        // protocol shard "<route>-<protocol>". The shard shares baseURL + key,
+        // and meta.moves keeps the model visible on this card.
+        if (options.autoProtocolSplit) {
+          // Only protocols this endpoint actually serves may receive models.
+          const candidates = (supportedProtocols ?? ["openai-completions", "openai-responses", "anthropic-messages"])
+            .filter((p) => p !== route.api);
+          const verified = candidates.length > 0
+            ? await verifiedProtocols(route.baseURL ?? "", apiKey, candidates)
+            : [];
+          const allowed: string[] = route.api ? [route.api, ...verified] : verified;
+          const plan = planProtocolSplit({
+            routeId,
+            routeApi: route.api,
+            models,
+            moves,
+            supportedProtocols: allowed,
+            suggest: suggestProtocol,
+            compatFor,
+          });
+          models = plan.stay;
+          for (const key of Object.keys(movesAll)) delete movesAll[key];
+          Object.assign(movesAll, plan.moves);
+          for (const [sid, carried] of Object.entries(plan.shards)) {
+            const existing = next[sid]?.models ?? [];
+            // Keep hand-moved models (moves entry without auto) already there.
+            const handMoved = existing.filter((m) => moves[`${sid}/${m.id}`]?.auto !== true && !carried.some((c) => c.id === m.id));
+            const shard = next[sid] ?? {
+              displayName: `${route.displayName ?? routeId} · ${plan.shardProtocols[sid]}`,
+              api: plan.shardProtocols[sid],
+              baseURL: shardBaseURL(plan.shardProtocols[sid], route.baseURL),
+              apiKeyEnv: route.apiKeyEnv,
+            };
+            shard.api = plan.shardProtocols[sid];
+            shard.baseURL = shardBaseURL(plan.shardProtocols[sid], route.baseURL);
+            shard.apiKeyEnv = shard.apiKeyEnv ?? route.apiKeyEnv;
+            shard.models = [...handMoved, ...carried];
+            next[sid] = shard;
+            for (const m of carried) {
+              const mi = matchinfo[m.id];
+              if (mi) matchinfoAll[sid] = { ...(matchinfoAll[sid] ?? {}), [m.id]: mi };
+              delete matchinfo[m.id];
+            }
+          }
+        }
+
         matchinfoAll[routeId] = matchinfo;
         // Mirror routes (<route>-<protocol>) only carry hand-moved models that
         // the listing may never advertise; do not treat an empty listing as fatal.
@@ -361,6 +448,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     const { stripped } = await writer.writeProviders(next, reason);
     const meta = loadMeta();
     meta.lastRefresh = { at: Date.now(), reason, perRoute };
+    meta.moves = movesAll;
     saveMeta(meta);
     return { ok: true, perRoute, strippedCompatKeys: stripped };
   }
@@ -415,7 +503,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         overrides: loadOverrides(),
         matchinfo: loadMatchInfo(),
         backups: writer.listBackups().map((b) => ({ id: b.id, createdAt: b.createdAt, reason: b.reason, routes: Object.keys(b.providers).length })),
-        moves: ((loadMeta().moves ?? {}) as Record<string, { to: string; protocol: string }>),
+        moves: Object.fromEntries(Object.entries((loadMeta().moves ?? {}) as Record<string, { to: string; protocol: string; pinned?: boolean }>).filter(([, v]) => !v.pinned)),
         meta: loadMeta(),
       });
     }),
@@ -503,7 +591,19 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         saveMatchInfo(mi);
         next[id] = route;
         await writer.writeProviders(next, `upsert provider ${id}`);
-        return json({ ok: true, id, detectedProtocol: detected?.api, modelCount: models.length, route: { ...route, apiKeyEnv: route.apiKeyEnv } });
+        // Apply per-model protocol matching to the fresh route (the split needs
+        // the matched listing, which we just built).
+        let modelCount = models.length;
+        if (options.autoProtocolSplit) {
+          try {
+            const split = await refreshRoutes([id], `auto protocol split after add ${id}`);
+            const info = (split.perRoute as Record<string, { models?: number }>)[id];
+            if (typeof info?.models === "number") modelCount = info.models;
+          } catch (error) {
+            warn(`auto protocol split failed for ${id}: ${String(error instanceof Error ? error.message : error)}`);
+          }
+        }
+        return json({ ok: true, id, detectedProtocol: detected?.api, modelCount, route: { ...route, apiKeyEnv: route.apiKeyEnv } });
       } finally {
         clearTimeout(timer);
       }
@@ -556,8 +656,10 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
             saveMatchInfo(mi);
           }
           const meta = loadMeta();
-          const moves = (meta.moves ?? {}) as Record<string, { to: string; protocol: string }>;
-          delete moves[`${parentId}/${modelId}`];
+          const moves = (meta.moves ?? {}) as Record<string, { to: string; protocol: string; auto?: boolean; pinned?: boolean }>;
+          // Pin: keep the model on the parent protocol even though its family
+          // suggests otherwise; auto-split must not move it again.
+          moves[`${parentId}/${modelId}`] = { to: parentId, protocol: parent.api ?? "openai-completions", auto: false, pinned: true };
           meta.moves = moves;
           saveMeta(meta);
           await writer.writeProviders(next, `protocol move-back ${routeId}/${modelId} → ${parentId}`);
@@ -646,7 +748,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
       const body = await readBody(request);
       // Persist options into the plugin's own settings namespace.
       const patch: Record<string, unknown> = {};
-      for (const key of ["managedRoutes", "probeEnabled", "deleteSync", "autoRefresh", "refreshIntervalHours", "backupKeep"] as const) {
+      for (const key of ["managedRoutes", "probeEnabled", "deleteSync", "autoRefresh", "refreshIntervalHours", "backupKeep", "autoProtocolSplit"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       if (seams.settings) {

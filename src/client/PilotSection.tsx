@@ -227,6 +227,11 @@ function OptionsPanel({ state, busy, run }: { state: StateResponse | null; busy:
             <input style={styles.input} type="number" min={1} value={Number(local.backupKeep ?? 10)} onChange={(e) => set("backupKeep", Number(e.target.value))} />
           </label>
         </div>
+        <label style={{ ...styles.field, marginTop: 8 }}>
+          <span style={styles.label}>{t("autoProtocolSplit")}</span>
+          <input type="checkbox" checked={local.autoProtocolSplit !== false} onChange={(e) => set("autoProtocolSplit", e.target.checked)} />
+          <div style={styles.muted}>{t("autoProtocolSplitHint")}</div>
+        </label>
         <button style={styles.btnPrimary} disabled={busy} onClick={() => run(() => api.options(local), t("ok"))}>{t("save")}</button>
       </div>
     </div>

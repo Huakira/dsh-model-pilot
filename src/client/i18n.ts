@@ -64,6 +64,8 @@ const en: Record<string, string> = {
   movedHint: "Smart protocol match: this model speaks a different wire protocol than the provider's; it is served by the protocol shard and shown here for continuity.",
   servedByMirror: "Served by the protocol shard (same baseURL + key).",
   shard: "Protocol shard",
+  autoProtocolSplit: "Match protocol per model",
+  autoProtocolSplitHint: "Each model is matched to its own wire protocol (Claude → anthropic, GPT/Grok → responses, others → completions) instead of forcing the whole provider onto one. Models whose family speaks another protocol are carried on a protocol shard under this provider.",
   mirroredBadge: "mirror",
 };
 
@@ -132,6 +134,8 @@ const zh: Record<string, string> = {
   movedHint: "智能协议匹配：这个模型的线路协议与提供商不同，由协议分流路由服务，此处保留显示以便追踪。",
   servedByMirror: "由协议分流路由服务（同 baseURL + 密钥）。",
   shard: "协议分流",
+  autoProtocolSplit: "按模型匹配协议",
+  autoProtocolSplitHint: "每个模型各自匹配线路协议（Claude → anthropic，GPT/Grok → responses，其余 → completions），而不是整个提供商绑定一个协议。家族协议不同的模型会被放到该提供商下的协议分流里，卡片上仍显示为已覆盖。",
   mirroredBadge: "镜像",
 };
 

@@ -169,6 +169,15 @@ export interface PilotOptions {
   refreshIntervalHours: number;
   /** How many backup snapshots to keep. */
   backupKeep: number;
+  /**
+   * Match each model's wire protocol from its family and split it onto the
+   * right protocol route automatically (Claude → anthropic-messages, GPT/Grok →
+   * openai-responses, the rest → openai-completions). pi-ai binds a protocol to
+   * a whole route, so per-model protocols are implemented as auto-created
+   * protocol shards ("<route>-<protocol>"); the UI still shows the model on its
+   * original provider card.
+   */
+  autoProtocolSplit: boolean;
 }
 
 export const DEFAULT_OPTIONS: PilotOptions = {
@@ -179,4 +188,5 @@ export const DEFAULT_OPTIONS: PilotOptions = {
   autoRefresh: false,
   refreshIntervalHours: 24,
   backupKeep: 10,
+  autoProtocolSplit: true,
 };

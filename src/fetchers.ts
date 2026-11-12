@@ -126,3 +126,52 @@ export async function probeModel(
 
 /** Default input modalities for a Gemini chat model (listing rarely states them). */
 export const GEMINI_DEFAULT_INPUT: Modality[] = ["text", "image"];
+/**
+ * Cheap "does this endpoint speak this protocol?" check: a request with an
+ * empty JSON body. Any non-404/405 answer means the route exists (a 400 about
+ * the payload/model still proves the wire endpoint is served), so no tokens are
+ * spent and no valid model is needed. Used to gate per-model protocol splitting:
+ * a model is only moved onto a protocol the gateway actually answers.
+ */
+/** Drop a trailing version segment that a protocol client adds itself. */
+export function stripTrailingV1(baseURL: string): string {
+  return baseURL.replace(/\/+$/, "").replace(/\/v1$/i, "");
+}
+
+export async function probeProtocolEndpoint(
+  protocol: Protocol,
+  baseURL: string,
+  apiKey: string | undefined,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const base = baseURL.replace(/\/+$/, "");
+  let url: string;
+  let headers: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
+  switch (protocol) {
+    case "anthropic-messages":
+      // The Anthropic SDK appends /v1/messages to its baseURL, so a route base
+      // that already ends in /v1 must lose it here (see shardBaseURL).
+      url = `${stripTrailingV1(base)}/v1/messages`;
+      headers = { ...headers, "x-api-key": apiKey ?? "", "anthropic-version": "2023-06-01" };
+      break;
+    case "openai-responses":
+      url = `${base}/responses`;
+      headers = { ...headers, authorization: `Bearer ${apiKey ?? ""}` };
+      break;
+    case "gemini":
+      url = `${base}/models`;
+      if (apiKey) url += `?key=${encodeURIComponent(apiKey)}`;
+      break;
+    case "openai-completions":
+    default:
+      url = `${base}/chat/completions`;
+      headers = { ...headers, authorization: `Bearer ${apiKey ?? ""}` };
+      break;
+  }
+  try {
+    const response = await fetch(url, { method: "POST", headers, body: "{}", signal });
+    return response.status !== 404 && response.status !== 405 && response.status !== 501;
+  } catch {
+    return false;
+  }
+}
