@@ -120,3 +120,16 @@ src/
 test/             core / integration / m2
 docs/             本文
 ```
+
+## 9. 版本变更记录
+
+- **0.1.3**（2026-11-11）修复「添加 provider 报错」并新增协议智能匹配：
+  - **根因**：pi-ai 写入即严格校验，`resolveRouteModels`（`dsh-llm-pi-ai/lib/index.js:679`）对**自定义网关 route**（route 名不在内置目录）要求 `models[]` 非空，否则抛 `resolves no models; the installed catalog does not describe this route, so its models must be listed in configuration`。旧版「先加空 route 再刷新」在添加这一步就被拒。
+  - **修复**：provider upsert 改为**添加即填充**——同一步内拉上游 listing + `buildModels` 后再写，绝不写空 route；listing 为空且非内置目录 route 时返回明确 400 错误且不落盘。
+  - **协议智能匹配**：新增 `detectProtocol(baseURL,apiKey,signal)`，依次试 openai-completions→anthropic-messages→openai-responses（completions/responses 共用 `{base}/models` listing，故 OpenAI 风格默认 completions），取首个返回模型的协议。客户端协议下拉新增「智能匹配（自动探测）」并设为新 provider 默认；upsert 收 `api:"auto"`/空即探测，写入具体协议。
+  - **refresh 守护**：某 route 刷新后 models 为空且非内置目录 route 时保留旧 models 并记 perRoute 错误，避免整段写入失败。
+  - **probe 文案**：按钮改「连通性测试 / Test reachability」（含义：发一个 max_tokens=1 的最小请求验证模型可达，不证明协议保真）；guard 捕获错误时写 warn 日志便于排查。
+  - 回归测试 +3（auto 探测即填充 / 空列表拒绝 / anthropic 自动识别），共 35 通过。
+- **0.1.2**：host applied 日志改异步（等 sourcesReady settle），避免快照 catalog:false 误导。
+- **0.1.1**：修 pi-ai 目录解析（全局安装 node 在 /usr/bin，ESM-only 包 exports 无 require 条件）；改用 process.argv[1] 锚定安装前缀 + 文件系统直探。
+- **0.1.0**：首版。

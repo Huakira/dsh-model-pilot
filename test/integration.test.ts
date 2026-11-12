@@ -163,4 +163,53 @@ describe("host integration", () => {
     const rb = await callRoute(routes, "/api/dsh-model-pilot/rollback", "POST", { backupId: target.id });
     expect(rb.data.ok).toBe(true);
   });
+
+  it("auto-detects protocol and populates models on add (never writes an empty route)", async () => {
+    const settings = mockSettings({});
+    settings.seam.documentPath = tempDocPath();
+    const listing = [{ id: "gpt-6-astra", name: "GPT-6 Astra" }, { id: "claude-opus-5", name: "Claude Opus 5" }];
+    const { ctx, routes } = mockCtx(settings.seam, listing);
+    apply(ctx, {} as any);
+    const add = await callRoute(routes, "/api/dsh-model-pilot/provider", "POST", {
+      id: "gw", baseURL: "https://gw.example/v1", apiKey: "k", api: "auto",
+    });
+    expect(add.data.ok).toBe(true);
+    expect(add.data.detectedProtocol).toBe("openai-completions");
+    expect(add.data.modelCount).toBe(2);
+    const route = settings.getProviders().gw;
+    expect(route.api).toBe("openai-completions");
+    // Models are populated in the same step — no separate refresh required.
+    expect(route.models.length).toBe(2);
+  });
+
+  it("rejects adding a custom route whose endpoint lists no models", async () => {
+    const settings = mockSettings({});
+    settings.seam.documentPath = tempDocPath();
+    const { ctx, routes } = mockCtx(settings.seam, []);
+    apply(ctx, {} as any);
+    const add = await callRoute(routes, "/api/dsh-model-pilot/provider", "POST", {
+      id: "empty-route", baseURL: "https://gw.example/v1", apiKey: "k", api: "openai-completions",
+    });
+    expect(add.data.ok).toBe(false);
+    expect(String(add.data.error)).toMatch(/no models/i);
+    expect(settings.getProviders()["empty-route"]).toBeUndefined();
+  });
+
+  it("auto-detects anthropic when the openai listing is empty", async () => {
+    const settings = mockSettings({});
+    settings.seam.documentPath = tempDocPath();
+    const { ctx, routes } = mockCtx(settings.seam, []);
+    ctx.llm.discoverModels = async (_ns: string, req: any) => {
+      if (req.api === "anthropic-messages") return [{ id: "claude-opus-5", name: "Claude Opus 5" }];
+      return [];
+    };
+    apply(ctx, {} as any);
+    const add = await callRoute(routes, "/api/dsh-model-pilot/provider", "POST", {
+      id: "anthropic-route", baseURL: "https://gw.example", apiKey: "k", api: "auto",
+    });
+    expect(add.data.ok).toBe(true);
+    expect(add.data.detectedProtocol).toBe("anthropic-messages");
+    expect(settings.getProviders()["anthropic-route"].api).toBe("anthropic-messages");
+    expect(settings.getProviders()["anthropic-route"].models.length).toBe(1);
+  });
 });

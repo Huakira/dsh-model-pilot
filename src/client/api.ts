@@ -62,7 +62,7 @@ export const api = {
   state: () => call<StateResponse>("/state", "GET"),
   refresh: (routes?: string[]) => call<{ ok: boolean; perRoute: Record<string, unknown>; strippedCompatKeys: string[] }>("/refresh", "POST", { routes }),
   upsertProvider: (p: { id: string; displayName?: string; baseURL?: string; api?: string; apiKey?: string; apiKeyEnv?: string }) =>
-    call<{ ok: boolean; id: string }>("/provider", "POST", { action: "upsert", ...p }),
+    call<{ ok: boolean; id: string; detectedProtocol?: string; modelCount?: number; route?: { api?: string } }>("/provider", "POST", { action: "upsert", ...p }),
   removeProvider: (id: string) => call<{ ok: boolean }>("/provider", "POST", { action: "remove", id }),
   override: (route: string, model: string, capability: Record<string, unknown>, clear = false) =>
     call<{ ok: boolean }>("/override", "POST", { route, model, capability, clear }),

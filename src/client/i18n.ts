@@ -42,6 +42,13 @@ const en: Record<string, string> = {
   error: "Error",
   ok: "Done",
   confidence: "Confidence",
+  autoProtocol: "Auto-detect (smart match)",
+  autoHint: "Auto-detect probes the endpoint and picks the protocol that returns models; you can still force a specific one.",
+  probe: "Test reachability",
+  probeHint: "Sends a minimal 1-token request to check the model responds.",
+  reachable: "reachable",
+  unreachable: "unreachable",
+  addedMsg: "Saved · protocol {protocol} · {count} models",
 };
 
 const zh: Record<string, string> = {
@@ -87,6 +94,13 @@ const zh: Record<string, string> = {
   error: "错误",
   ok: "完成",
   confidence: "置信度",
+  autoProtocol: "智能匹配（自动探测）",
+  autoHint: "智能匹配会探测端点，自动选用能返回模型的协议；也可手动指定。",
+  probe: "连通性测试",
+  probeHint: "发送一个最小（1 token）请求，检查模型是否可达。",
+  reachable: "可达",
+  unreachable: "不可达",
+  addedMsg: "已保存 · 协议 {protocol} · {count} 个模型",
 };
 
 function pick(): Record<string, string> {

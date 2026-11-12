@@ -65,8 +65,8 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
     setBusy(true);
     setToast(null);
     try {
-      await fn();
-      setToast({ msg: okMsg });
+      const result = await fn();
+      setToast({ msg: typeof result === "string" ? result : okMsg });
       await load();
     } catch (error) {
       setToast({ msg: String(error instanceof Error ? error.message : error), err: true });
@@ -121,7 +121,7 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
               </div>
               <div style={styles.row}>
                 <button style={styles.btn} disabled={busy} onClick={() => run(() => api.refresh([id]), t("ok"))}>{t("refresh")}</button>
-                <button style={styles.btn} disabled={busy} onClick={async () => { setBusy(true); try { const r = await api.probe(id); setToast({ msg: `${r.protocol}: ${r.reachable ? "reachable" : "unreachable"}${r.status ? ` (HTTP ${r.status})` : ""}${r.error ? ` — ${r.error}` : ""}`, err: !r.reachable }); } catch (e) { setToast({ msg: String(e instanceof Error ? e.message : e), err: true }); } finally { setBusy(false); } }}>Probe</button>
+                <button style={styles.btn} disabled={busy} title={t("probeHint")} onClick={async () => { setBusy(true); try { const r = await api.probe(id); setToast({ msg: `${r.protocol}: ${r.reachable ? t("reachable") : t("unreachable")}${r.status ? ` (HTTP ${r.status})` : ""}${r.error ? ` — ${r.error}` : ""}`, err: !r.reachable }); } catch (e) { setToast({ msg: String(e instanceof Error ? e.message : e), err: true }); } finally { setBusy(false); } }}>{t("probe")}</button>
                 <button style={styles.btn} disabled={busy} onClick={() => { setEditRoute(id); setAddOpen(true); }}>{t("override")}</button>
                 <button style={styles.btn} onClick={() => setExpanded((e) => ({ ...e, [id]: !e[id] }))}>{isOpen ? "▾" : "▸"} {t("models")}</button>
                 <button style={styles.btnDanger} disabled={busy} onClick={() => run(() => api.removeProvider(id), t("ok"))}>{t("remove")}</button>
@@ -171,7 +171,12 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
           initial={editRoute ? { id: editRoute, ...providers[editRoute] } : undefined}
           protocols={state?.supportedProtocols ?? PROTOCOLS}
           onClose={() => setAddOpen(false)}
-          onSubmit={(form) => run(async () => { await api.upsertProvider(form); setAddOpen(false); }, t("ok"))}
+          onSubmit={(form) => run(async () => {
+            const r = await api.upsertProvider(form);
+            setAddOpen(false);
+            const proto = r.detectedProtocol ?? r.route?.api ?? form.api ?? "";
+            return t("addedMsg").replace("{protocol}", proto).replace("{count}", String(r.modelCount ?? 0));
+          }, t("ok"))}
           busy={busy}
         />
       )}
@@ -250,7 +255,7 @@ function ProviderForm({ initial, protocols, onClose, onSubmit, busy }: {
   const [id, setId] = useState(initial?.id ?? "");
   const [displayName, setDisplayName] = useState(initial?.displayName ?? "");
   const [baseURL, setBaseURL] = useState(initial?.baseURL ?? "");
-  const [apiProto, setApiProto] = useState(initial?.api ?? protocols[0] ?? "openai-completions");
+  const [apiProto, setApiProto] = useState(initial?.api ?? "auto");
   const [apiKey, setApiKey] = useState("");
   const editing = Boolean(initial?.id);
   return (
@@ -272,8 +277,10 @@ function ProviderForm({ initial, protocols, onClose, onSubmit, busy }: {
         <label style={styles.field}>
           <span style={styles.label}>{t("protocol")}</span>
           <select style={styles.input} value={apiProto} onChange={(e) => setApiProto(e.target.value)}>
+            <option value="auto">{t("autoProtocol")}</option>
             {protocols.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
+          <div style={styles.muted}>{t("autoHint")}</div>
         </label>
         <label style={styles.field}>
           <span style={styles.label}>{t("apiKey")} {editing ? "(leave blank to keep)" : ""}</span>

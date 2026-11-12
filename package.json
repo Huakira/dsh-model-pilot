@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-pilot",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Smart model configuration for DeepSeek Harness: add a provider baseURL + key, pull the upstream model list, auto-match wire protocol / context window / multimodal capabilities / reasoning effort from the pi-ai catalog and models.dev, and silently write it into the official Models page. One-click refresh, per-model overrides, backup and rollback.",
   "license": "MIT",
   "type": "module",

@@ -21,6 +21,7 @@ import {
   DEFAULT_OPTIONS,
   type ListingRow,
   type PilotOptions,
+  type Protocol,
   type ProviderRoute,
   type StoredModel,
   type ModelCapability,
@@ -204,6 +205,34 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     return llm.discoverModels(PI_AI_NS, { baseURL: route.baseURL, api, apiKey }, signal);
   }
 
+  /**
+   * Auto-detect the wire protocol an endpoint speaks by trying its model listing
+   * under each supported protocol. openai-completions and openai-responses share
+   * the {baseURL}/models listing, so an OpenAI-style endpoint resolves to
+   * completions (the common gateway default); anthropic uses a distinct endpoint.
+   * Returns the first protocol that yields at least one model.
+   */
+  async function detectProtocol(
+    baseURL: string,
+    apiKey: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ api: Protocol; listing: ListingRow[] }> {
+    const candidates: Protocol[] = ["openai-completions", "anthropic-messages", "openai-responses"];
+    if (supportedProtocols?.includes("gemini")) candidates.push("gemini");
+    const tried: string[] = [];
+    for (const api of candidates) {
+      if (supportedProtocols && !supportedProtocols.includes(api)) continue;
+      try {
+        const listing = await fetchListing({ baseURL, api } as ProviderRoute, apiKey, signal);
+        if (listing.length > 0) return { api, listing };
+        tried.push(`${api}: 0 models`);
+      } catch (error) {
+        tried.push(`${api}: ${String(error instanceof Error ? error.message : error)}`);
+      }
+    }
+    throw new Error(`could not auto-detect protocol for ${baseURL} — ${tried.join("; ") || "no protocols available"}`);
+  }
+
   function buildModels(
     routeId: string,
     route: ProviderRoute,
@@ -272,6 +301,10 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         const apiKey = route.apiKeyEnv && credentials ? (await credentials.resolve(route.apiKeyEnv))?.value : undefined;
         const listing = await fetchListing(route, apiKey);
         const { models, added, kept } = buildModels(routeId, route, listing, overrides);
+        if (models.length === 0 && !catalog?.providers.includes(routeId)) {
+          perRoute[routeId] = { error: "listing returned no models; kept previous models (a custom route cannot be empty)" };
+          continue;
+        }
         route.models = models;
         perRoute[routeId] = { ok: true, listed: listing.length, added: added.length, keptStale: kept.length, models: models.length };
       } catch (error) {
@@ -297,7 +330,9 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     try {
       return await fn(request);
     } catch (error) {
-      return json({ ok: false, error: String(error instanceof Error ? error.message : error) }, 500);
+      const msg = String(error instanceof Error ? error.message : error);
+      warn(`endpoint error (${request.url}): ${msg}`);
+      return json({ ok: false, error: msg }, 500);
     }
   };
 
@@ -373,24 +408,54 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
       const route: ProviderRoute = { ...existing };
       if (typeof body.displayName === "string") route.displayName = body.displayName;
       if (typeof body.baseURL === "string") route.baseURL = body.baseURL.trim();
-      if (typeof body.api === "string") route.api = body.api as ProviderRoute["api"];
       // Key: store in credentials, keep only the ref in the route.
-      if (typeof body.apiKey === "string" && body.apiKey.length > 0) {
+      let apiKeyValue: string | undefined =
+        typeof body.apiKey === "string" && body.apiKey.length > 0 ? body.apiKey : undefined;
+      if (apiKeyValue) {
         const ref = (typeof body.apiKeyEnv === "string" && body.apiKeyEnv) || route.apiKeyEnv || `DSH_MODEL_PILOT_${id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
         if (!credentials) return json({ ok: false, error: "credentials seam unavailable" }, 500);
-        await credentials.set(ref, body.apiKey);
+        await credentials.set(ref, apiKeyValue);
         route.apiKeyEnv = ref;
       } else if (typeof body.apiKeyEnv === "string") {
         route.apiKeyEnv = body.apiKeyEnv;
       }
-      if (!route.api) route.api = "openai-completions";
-      if (supportedProtocols && !supportedProtocols.includes(route.api)) {
-        return json({ ok: false, error: `protocol "${route.api}" is not supported by the installed adapter (offers: ${supportedProtocols.join(", ")})` }, 400);
+      if (!apiKeyValue && route.apiKeyEnv && credentials) {
+        apiKeyValue = (await credentials.resolve(route.apiKeyEnv))?.value;
       }
-      if (!Array.isArray(route.models)) route.models = [];
-      next[id] = route;
-      await writer.writeProviders(next, `upsert provider ${id}`);
-      return json({ ok: true, id, route: { ...route, apiKeyEnv: route.apiKeyEnv } });
+      await catalogReady;
+
+      // Resolve the protocol: an explicit choice, or "auto"/empty → probe the
+      // endpoint's listing and adopt whichever protocol answers with models.
+      const requestedApi = typeof body.api === "string" && body.api ? body.api : route.api;
+      let detected: { api: Protocol; listing: ListingRow[] } | undefined;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try {
+        if (!requestedApi || requestedApi === "auto") {
+          if (!route.baseURL) return json({ ok: false, error: "baseURL is required to auto-detect the protocol" }, 400);
+          detected = await detectProtocol(route.baseURL, apiKeyValue, controller.signal);
+          route.api = detected.api;
+        } else {
+          route.api = requestedApi as Protocol;
+        }
+        if (supportedProtocols && !supportedProtocols.includes(route.api)) {
+          return json({ ok: false, error: `protocol "${route.api}" is not supported by the installed adapter (offers: ${supportedProtocols.join(", ")})` }, 400);
+        }
+
+        // Populate models BEFORE writing: pi-ai rejects an empty custom route
+        // ("resolves no models"), so add must fetch the listing in the same step.
+        const listing = detected?.listing ?? (await fetchListing(route, apiKeyValue, controller.signal));
+        const { models } = buildModels(id, route, listing, loadOverrides());
+        if (models.length === 0 && !catalog?.providers.includes(id)) {
+          return json({ ok: false, error: "the endpoint returned no models; a custom route must list at least one model (check the baseURL, key and protocol)" }, 400);
+        }
+        route.models = models;
+        next[id] = route;
+        await writer.writeProviders(next, `upsert provider ${id}`);
+        return json({ ok: true, id, detectedProtocol: detected?.api, modelCount: models.length, route: { ...route, apiKeyEnv: route.apiKeyEnv } });
+      } finally {
+        clearTimeout(timer);
+      }
     }),
   });
 
