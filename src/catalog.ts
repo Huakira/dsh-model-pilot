@@ -114,28 +114,61 @@ export function capabilityFromEntry(entry: CatalogEntry): ModelCapability {
 }
 
 /**
+ * Walk up from a resolved adapter file looking for the pi-ai catalog dist file.
+ *
+ * pi-ai (>=1.x) is ESM-only: its package `exports` map exposes `.` and
+ * `./providers/*` under `import`/`types` conditions only, with no `require` or
+ * `default` condition. `createRequire(...).resolve("@earendil-works/pi-ai/...")`
+ * therefore throws ERR_PACKAGE_PATH_NOT_EXPORTED even when the package is
+ * present. We probe the filesystem directly instead; `loadPiAiCatalog` then
+ * `import()`s the concrete dist file (which bypasses the exports map).
+ *
+ * The catalog may be hoisted into any ancestor `node_modules` (e.g. a sibling
+ * of the adapter under the DSH core's node_modules), so check both `dir` and
+ * `dir/node_modules` at each level.
+ */
+function catalogNearAdapter(adapterPath: string): string | undefined {
+  let dir = dirname(adapterPath);
+  for (let depth = 0; depth < 12; depth++) {
+    for (const base of [dir, join(dir, "node_modules")]) {
+      const candidate = join(base, "@earendil-works", "pi-ai", "dist", "providers", "all.js");
+      if (existsSync(candidate)) return candidate;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
+/**
  * Resolve the installed pi-ai catalog module path. Returns undefined when the
  * adapter or its catalog cannot be located (caller falls back to other sources).
+ *
+ * Anchor order (most reliable first):
+ *  1. The DSH install prefix derived from the running launcher script
+ *     (`process.argv[1]` = `<prefix>/bin/dsh`). This is independent of where the
+ *     node binary lives — on a global install node is often `/usr/bin/node`,
+ *     so the execPath-derived prefix would point at the wrong tree.
+ *  2. The node-binary-derived global prefix (bundled-runtime layouts).
+ *  3. Every DSH profile's node_modules under DSH_HOME (or ~/.dsh).
+ *  4. The plugin's own resolution root (dev / unit-test layouts).
  */
 export function resolvePiAiCatalogPath(): string | undefined {
-  const candidates: string[] = [];
-  try {
-    const require = createRequire(import.meta.url);
-    // Resolve the adapter, then pi-ai from the adapter's own resolution root so
-    // the catalog matches the adapter version actually serving requests.
-    const adapterPath = require.resolve("@deepseek-ai/dsh-llm-pi-ai");
-    const adapterRequire = createRequire(adapterPath);
-    candidates.push(adapterRequire.resolve("@earendil-works/pi-ai/providers/all"));
-  } catch {
-    /* fall through to directory probes */
-  }
-  // Portable fallback probes (the adapter resolution above is the normal path):
-  // the global npm prefix derived from the running node binary, and every DSH
-  // profile's node_modules under DSH_HOME (or ~/.dsh).
   const roots: string[] = [];
+
+  // (1) DSH install prefix from the launcher script path.
+  const launchScript = process.argv[1];
+  if (launchScript) {
+    const installRoot = join(dirname(launchScript), "..", "lib", "node_modules");
+    roots.push(join(installRoot, "@deepseek-ai", "dsh", "node_modules"));
+    roots.push(installRoot);
+  }
+  // (2) node-binary-derived global prefix.
   const globalRoot = join(dirname(process.execPath), "..", "lib", "node_modules");
   roots.push(join(globalRoot, "@deepseek-ai", "dsh", "node_modules"));
   roots.push(globalRoot);
+  // (3) DSH profile node_modules.
   const dshHome = process.env.DSH_HOME ?? join(process.env.HOME ?? "~", ".dsh");
   const profilesDir = join(dshHome, "profiles");
   try {
@@ -143,11 +176,41 @@ export function resolvePiAiCatalogPath(): string | undefined {
   } catch {
     /* no profiles directory */
   }
-  for (const root of roots) {
-    candidates.push(join(root, "@earendil-works/pi-ai/dist/providers/all.js"));
-    candidates.push(join(root, "@deepseek-ai/dsh-llm-pi-ai/node_modules/@earendil-works/pi-ai/dist/providers/all.js"));
+
+  const candidates: string[] = [];
+  const pushRoot = (root: string) => {
+    // Direct dist probes for the common hoisted / nested layouts.
+    candidates.push(join(root, "@earendil-works", "pi-ai", "dist", "providers", "all.js"));
+    candidates.push(join(root, "@deepseek-ai", "dsh", "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "all.js"));
+    candidates.push(join(root, "@deepseek-ai", "dsh-llm-pi-ai", "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "all.js"));
+    // Adapter-anchored walk: resolve the adapter (its package IS resolvable),
+    // then locate the catalog relative to it for version consistency.
+    try {
+      const r = createRequire(join(root, "package.json"));
+      const adapterPath = r.resolve("@deepseek-ai/dsh-llm-pi-ai");
+      const near = catalogNearAdapter(adapterPath);
+      if (near) candidates.push(near);
+    } catch {
+      /* adapter not resolvable from this root */
+    }
+  };
+  for (const root of roots) pushRoot(root);
+
+  // (4) The plugin's own resolution root (dev / test where the adapter is a
+  // sibling dependency of this package).
+  try {
+    const require = createRequire(import.meta.url);
+    const adapterPath = require.resolve("@deepseek-ai/dsh-llm-pi-ai");
+    const near = catalogNearAdapter(adapterPath);
+    if (near) candidates.push(near);
+  } catch {
+    /* not resolvable from the plugin location */
   }
+
+  const seen = new Set<string>();
   for (const candidate of candidates) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
     if (existsSync(candidate)) return candidate;
   }
   return undefined;

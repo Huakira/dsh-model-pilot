@@ -13,7 +13,7 @@
 | 凭据 | `ctx.credentials`（`resolve/set/unset/describe`） | key 落库与解析，配置只留引用 | `dsh-credentials/lib/types/index.d.ts` |
 | host 代理路由 | `ctx.connection.fetch.register({path,methods,requestBody,fetch})` | 浏览器同源调 host，key 不进浏览器 | `dsh-client-connection/lib/index.js:732/840`；类型 `types/rpc.d.ts:119` |
 | 客户端 slot | `ctx.slots.register({name:"settings.section",…}, Component)` | 独立设置页 | `dsh-client-ui-renderer`；契约 `dsh-client-ui-settings/lib/types/client/contract/slots.d.ts:73` |
-| pi-ai 目录 | `@earendil-works/pi-ai/providers/all`（`getBuiltinProviders/getBuiltinModels`） | 能力主源 | 从已装 `dsh-llm-pi-ai` 的 node_modules 解析 |
+| pi-ai 目录 | `@earendil-works/pi-ai` 的 `dist/providers/all.js`（`getBuiltinProviders/getBuiltinModels`） | 能力主源 | 文件系统直探 dist 文件，锚定 DSH 安装前缀（见 §5.3） |
 
 ### 关键约束（实测）
 
@@ -72,15 +72,26 @@ catalog       = pi-ai 目录是否加载成功
 
 1. **协议动态探测**：`extractSupportedProtocols` 读 schema api union；UI 下拉与 upsert 校验都用它。
 2. **compat 键剥离**：`extractCompatKeys` 走 schemastery ref 图，收集所有含 `thinkingFormat` 的 object 节点的 dict 键；写前剥掉不在集合里的 compat 键（`stripUnknownCompat`），避免被新/旧 schema 拒绝。
-3. **目录同源解析**：`resolvePiAiCatalogPath` 先从已装 `dsh-llm-pi-ai` 的 require 根解析 pi-ai，再回退 well-known 目录探针；保证目录与适配器同版本。
+3. **目录同源解析**：`resolvePiAiCatalogPath` 按可靠度顺序锚定候选根，文件系统直探 `dist/providers/all.js`，再 `import()` 具体文件；保证目录与适配器同版本。详见 §5.3。
 4. **peer 范围**：`@deepseek-ai/schemastery ^3.18.0`、`react ^18||^19`；DSH 本体 ≥ 0.2.2-rc.1（安装器校验）。
+
+### 5.3 目录解析的两个实测坑（0.1.1 修复）
+
+0.1.0 在全局安装的 DSH 上 `catalog:false`（静默降级到 models.dev+家族默认）。根因有二，均已修复并加回归测试 `test/catalog-resolve.test.ts`：
+
+1. **node 二进制不在 DSH 前缀里**。全局安装时 node 常在 `/usr/bin/node`，而 DSH 在 `/opt/dsh`。旧逻辑用 `dirname(process.execPath)/../lib/node_modules` 推全局前缀，得到 `/usr/lib/node_modules`（无目录）。**修复**：优先用启动脚本 `process.argv[1]`（`= <prefix>/bin/dsh`）推 `<prefix>/lib/node_modules`，与 node 位置无关；execPath 前缀降为次选锚点。
+2. **pi-ai 是 ESM-only，exports 无 `require` 条件**。pi-ai 1.5.2 的 `exports` 含 `.` 与 `./providers/*`，但只在 `import`/`types` 条件下映射，没有 `require`/`default`。`createRequire(...).resolve("@earendil-works/pi-ai/providers/all")` 必抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`（连包根都解析不了）。**修复**：不再 require.resolve 目录子路径，改为文件系统直探 `dist/providers/all.js`，再 `import()` 该具体文件（绕过 exports 映射）。适配器包本身可 resolve，故仍可从适配器目录上溯定位 pi-ai（`catalogNearAdapter`，兼容 hoist 到任意祖先 node_modules 的布局）。
+
+锚点顺序：① `argv[1]` 安装前缀（含 `@deepseek-ai/dsh/node_modules` 嵌套）→ ② execPath 全局前缀 → ③ `DSH_HOME/profiles/*/node_modules` → ④ 插件自身 require 根（dev/test）。每个根都试 hoist/嵌套直探 + 适配器上溯。
+
+> 运行时实测布局（nyc，DSH 0.2.2-rc.1）：目录在 `/opt/dsh/lib/node_modules/@deepseek-ai/dsh/node_modules/@earendil-works/pi-ai/dist/providers/all.js`，是适配器的**同级**（不在适配器自己的 node_modules 里）。修复后 `catalog:true`，43 provider / 1643 模型。
 
 ## 6. 升级 DSH 后的回归清单
 
 升级 DSH（或 pi-ai 适配器）后，按此快速回归：
 
-1. `pnpm test`（集成测试用真实 pi-ai 目录，能发现目录 API 漂移）。
-2. 启动看日志 `adapter protocols: …` 与 `pi-ai catalog loaded: N models`——协议数/模型数突变即漂移信号。
+1. `pnpm test`：`catalog-resolve.test.ts` 用合成安装树锁定解析锚点；`integration.test.ts` 用 fixture 目录测编排（构建项目不装适配器，故其 seam catalog 为 false 属正常）。
+2. 启动看日志 `adapter protocols: …` 与 `host applied (seams: …)`——**catalog 必须为 true**；若 false 看 `pi-ai catalog unavailable`，按 §5.3 排查锚点/布局漂移。真实目录加载成功时 `loadPiAiCatalog` 返回 43 provider / 1643 模型（数量突变即漂移信号）。
 3. 设置页顶部 seams 全绿、catalog/models.dev 状态正常。
 4. 对一个测试 route 刷新 → 展开模型表核对窗口/上限/档位 → 覆盖一个字段 → 回滚。
 5. 若 schema 拒绝写入：看日志 `stripped unsupported compat keys`；新键需要时更新 `compatFor`/matcher。
