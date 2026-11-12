@@ -24,9 +24,7 @@ export function formatTokens(n: number | undefined): string {
 export function effortsLabel(e: ModelView["reasoningEfforts"]): string {
   if (e === false) return "—";
   if (!e) return "—";
-  const keys = Object.keys(e).filter((k) => k !== "off"); // off is implied
-  if (keys.length === 0) return "—";
-  return keys.join("/");
+  return Object.keys(e).join("/");
 }
 
 function sourceBadge(info: MatchInfoView | undefined): { label: string; tone: "authoritative" | "guess" } | null {
