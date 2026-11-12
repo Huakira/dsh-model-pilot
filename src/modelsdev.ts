@@ -13,8 +13,36 @@
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { normalizeId, stripRoutingPrefix, baseModelId } from "./protocol.js";
+import { normalizeId, stripRoutingPrefix, baseModelId, familyOf } from "./protocol.js";
 import type { ModelCapability, Modality, ReasoningEfforts } from "./types.js";
+
+/**
+ * models.dev provider keys that count as the model's own vendor (first-party
+ * listing). Aggregators frequently copy wrong limits (e.g. context size into
+ * limit.output); the vendor's own entry is the most reliable capability
+ * source models.dev has, so when present it wins over the majority vote.
+ */
+const VENDOR_KEYS: Record<string, string[]> = {
+  claude: ["anthropic"],
+  gemini: ["google"],
+  gpt: ["openai"],
+  grok: ["xai", "x-ai"],
+  deepseek: ["deepseek"],
+  qwen: ["qwen", "alibaba"],
+  glm: ["zai", "zhipu"],
+  kimi: ["moonshotai", "moonshot"],
+  minimax: ["minimax"],
+  mistral: ["mistralai", "mistral"],
+  llama: ["meta", "meta-llama"],
+};
+
+function isVendorProvider(providerKey: string, modelId: string): boolean {
+  const family = familyOf(modelId);
+  const keys = VENDOR_KEYS[family];
+  if (!keys) return false;
+  const pk = providerKey.toLowerCase();
+  return keys.some((k) => pk === k || pk.startsWith(k + "-") || pk.startsWith(k + "/"));
+}
 
 export const MODELS_DEV_URL = "https://models.dev/api.json";
 const DEFAULT_TTL_MS = 24 * 3600 * 1000;
@@ -40,6 +68,8 @@ interface ModelsDevProvider {
 /** A consensus capability with the number of providers that agreed. */
 interface ConsensusCap extends ModelCapability {
   votes: number;
+  /** Votes coming from the model vendor's own models.dev listing. */
+  vendorVotes: number;
 }
 
 export interface ModelsDevIndex {
@@ -124,7 +154,7 @@ export function buildModelsDevIndex(doc: Record<string, ModelsDevProvider>, fetc
   // Group capabilities by normalized id so we can majority-vote disagreements.
   const byIdCaps = new Map<string, ConsensusCap[]>();
 
-  const push = (key: string, cap: ModelCapability) => {
+  const push = (key: string, cap: ModelCapability, vendor: boolean) => {
     if (Object.keys(cap).length === 0) return;
     const list = byIdCaps.get(key) ?? [];
     // Deduplicate: if an identical capability is already recorded, bump its vote
@@ -136,17 +166,18 @@ export function buildModelsDevIndex(doc: Record<string, ModelsDevProvider>, fetc
         c.reasoningEfforts === cap.reasoningEfforts &&
         eqModalityArr(c.input ?? [], cap.input ?? []),
     );
-    if (found) found.votes += 1;
-    else list.push({ ...cap, votes: 1 });
+    if (found) { found.votes += 1; if (vendor) found.vendorVotes += 1; }
+    else list.push({ ...cap, votes: 1, vendorVotes: vendor ? 1 : 0 });
     byIdCaps.set(key, list);
   };
 
-  for (const provider of Object.values(doc)) {
+  for (const [providerKey, provider] of Object.entries(doc)) {
     for (const [modelId, entry] of Object.entries(provider?.models ?? {})) {
       if (!entry || typeof entry !== "object") continue;
       const cap = capabilityFromModelsDev(entry);
+      const vendor = isVendorProvider(providerKey, modelId);
       for (const key of new Set([normalizeId(modelId), stripRoutingPrefix(modelId)])) {
-        push(key, cap);
+        push(key, cap, vendor);
       }
     }
   }
@@ -170,7 +201,7 @@ export function buildModelsDevIndex(doc: Record<string, ModelsDevProvider>, fetc
         eqModalityArr(c.input ?? [], cap.input ?? []),
     );
     if (found) found.votes += 1;
-    else list.push({ ...cap, votes: 1 });
+    else list.push({ ...cap, votes: 1, vendorVotes: 0 });
     byBaseCaps.set(base, list);
   }
   const byBase = new Map<string, ModelCapability>();
@@ -183,14 +214,19 @@ export function buildModelsDevIndex(doc: Record<string, ModelsDevProvider>, fetc
 
 /** Majority-vote the candidate capabilities into one. */
 function consensusCap(caps: ConsensusCap[]): ModelCapability {
+  // Vendor-listed capabilities (first-party) outrank the aggregator majority:
+  // third-party listings regularly copy wrong limits, the vendor's own entry
+  // is the closest thing models.dev has to ground truth.
+  const vendorCaps = caps.filter((c) => c.vendorVotes > 0);
+  const pool = vendorCaps.length > 0 ? vendorCaps : caps;
   const out: ModelCapability = {};
-  const ctx = consensus(caps.map((c) => c.contextWindow), eqNum);
+  const ctx = consensus(pool.map((c) => c.contextWindow), eqNum);
   if (ctx !== undefined) out.contextWindow = ctx;
-  const max = consensus(caps.map((c) => c.maxTokens), eqNum);
+  const max = consensus(pool.map((c) => c.maxTokens), eqNum);
   if (max !== undefined) out.maxTokens = max;
-  const inp = consensus(caps.map((c) => c.input), eqModalityArr);
+  const inp = consensus(pool.map((c) => c.input), eqModalityArr);
   if (inp !== undefined && inp.length > 0) out.input = inp;
-  const eff = consensus<ReasoningEfforts | false>(caps.map((c) => c.reasoningEfforts), (a, b) => {
+  const eff = consensus<ReasoningEfforts | false>(pool.map((c) => c.reasoningEfforts), (a, b) => {
     if (a === false || b === false) return a === b;
     if (!a || !b) return false;
     const ka = Object.keys(a).sort();
