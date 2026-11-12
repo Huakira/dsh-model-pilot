@@ -287,3 +287,12 @@ const shard = next[sid] ?? { displayName, api, baseURL, apiKeyEnv };
 
 ### 教训
 改 settings 段落时不能只写「我知道的字段」——replace 语义下漏写即删除。新增路由一律从父路由深拷贝起步。
+
+### 0.1.21 后续：恢复配置时带回的非法 compat（同日修复）
+从备份恢复 shard 的 12 项字段时，把父路由 completions 专属的 compat 一起继承了，运行期报：
+`provider "axonhub-anthropic-messages" model "minimax-m3" sets compat "supportsDeveloperRole", but its api is "anthropic-messages", which does not take it`。
+- 用适配器自己的门禁表（`extractCompatGates` 从源码提取的纯数据）扫出 25 个非法键并剥离：两条 shard 的 `route.compat.chatTemplateKwargs/chatTemplateArgs`；anthropic 上 7 个模型的 `supportsDeveloperRole`+`supportsReasoningEffort`；responses 上 4 个模型的 `thinkingFormat`+`supportsReasoningEffort`。写前写后 diff 确认只有 compat 变化。
+- **关键认识**：`Config` schema 校验通过 ≠ 运行期通过。协议门禁在 `resolveModelCompat`（模型解析阶段）才检查，且只对 model 级 compat 抛错，route 级是静默过滤。
+- 插件自身的写入路径没这个问题：`writer.sanitizeCompatByProtocol` 同时清洗 route 级和 model 级 compat。事故原因是我用离线脚本直接写 YAML，绕过了 writer。
+- 已把两条规则写进 `dsh-plugin-dev` 技能（PR #99，版本 1.0.87）：settings 整段替换语义、compat 协议门禁。
+- 重启验证：0.1.21 live、seams 全 true、无 compat 报错、三条路由各 16 项配置（headers/thinkingBudgets 在）、minimax-m3 走 `/v1/messages` 实测 200。
