@@ -121,8 +121,12 @@ test/             core / integration / m2
 docs/             本文
 ```
 
-## 9. 版本变更记录
+## 9.  版本变更记录
 
+- **0.1.8**（2026-11-11）UI 重做 + 嵌入官方 Models 页：
+  - **官方主题样式**：客户端所有样式改用 DSH `--dsw-alias-*` 设计变量（卡片 `--dsw-alias-settings-card-fill/stroke`、次/主/危险按钮、输入框、徽标），与原生 Models 设置页在任何主题下视觉一致，不再用硬编码颜色。
+  - **嵌入官方 Models 页**：新增 `ModelsIntegration.tsx` 注册 `settings.models.provider-card`（keyed by settingsNs=`llm-pi-ai`）——每个 pi-ai 网关路由卡片内嵌自动匹配的模型表 + 刷新/覆盖；`settings.models.footer` 放全局「全部刷新」。抽取共享 `ModelTable`/`OverrideForm` 复用到独立页与卡片。
+  - 50 测试全过；typecheck 净。
 - **0.1.7**（2026-11-11）改进 id 匹配可靠性 + 模型来源透明化：
   - **base-id 回退匹配**：新增 `baseModelId()`（剥 `vendor/` 前缀、`:tag` 路由标签、保守变体后缀 `-uncensored/-latest/-free/-fast/-slow`，**不剥 `-preview`** 以免误并）。catalog 索引新增 `byBase` 表；`matchModel` 在精确 id 未命中时回退查 base id。实测救回：`longcat-2.5`（剥 `meituan/`）、`dots-3-note-preview`（剥 `:free`）、`glm-5.3-flash:fast`（剥 `:fast`）、`glm-5.3-flash-uncensored`（剥 `-uncensored`），全部命中官方目录（ctx 1M 级）。`qwen-4-max-preview` 是真模型但 pi-ai 目录与 models.dev 均未收录 qwen-4（最新只到 qwen3.8-max），只能手动覆盖。
   - **来源显示**：matchinfo 持久化到 `matchinfo.json`，UI 每模型显示来源徽标（pi-ai / models.dev / 估算），baseIdUsed 命中时 title 提示经哪个 base id 匹配。
