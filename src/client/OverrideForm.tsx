@@ -6,6 +6,17 @@ import React, { useState } from "react";
 import type { ModelView } from "./api.js";
 import { t } from "./i18n.js";
 import { styles } from "./styles.js";
+import { formatTokens } from "./ModelTable.js";
+
+/** "262144" | "262K" | "1M" | "1.5M" → number; invalid → undefined. */
+function parseTokens(raw: string): number | undefined {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([kKmM]?)\s*$/.exec(raw);
+  if (!m) return undefined;
+  const v = Number(m[1]);
+  if (!Number.isFinite(v)) return undefined;
+  const mult = m[2].toLowerCase() === "k" ? 1_000 : m[2].toLowerCase() === "m" ? 1_000_000 : 1;
+  return Math.round(v * mult);
+}
 
 export function OverrideForm({ route, model, onClose, onSubmit, busy }: {
   route: string;
@@ -14,8 +25,8 @@ export function OverrideForm({ route, model, onClose, onSubmit, busy }: {
   onSubmit: (cap: Record<string, unknown>, clear: boolean) => void;
   busy: boolean;
 }): React.ReactElement {
-  const [contextWindow, setContextWindow] = useState(model.contextWindow ?? 0);
-  const [maxTokens, setMaxTokens] = useState(model.maxTokens ?? 0);
+  const [contextWindow, setContextWindow] = useState(formatTokens(model.contextWindow ?? 0));
+  const [maxTokens, setMaxTokens] = useState(formatTokens(model.maxTokens ?? 0));
   const [input, setInput] = useState((model.input ?? ["text"]).join(","));
   const [efforts, setEfforts] = useState(model.reasoningEfforts ? JSON.stringify(model.reasoningEfforts) : "");
   const [thinkingFormat, setThinkingFormat] = useState(String(model.compat?.thinkingFormat ?? ""));
@@ -25,12 +36,12 @@ export function OverrideForm({ route, model, onClose, onSubmit, busy }: {
         <div style={{ ...styles.h1, fontSize: 15 }}>{t("override")}: {model.id}</div>
         <div style={styles.muted}>{route}</div>
         <label style={styles.field}>
-          <span style={styles.label}>{t("contextWindow")}</span>
-          <input style={styles.input} type="number" value={contextWindow} onChange={(e) => setContextWindow(Number(e.target.value))} />
+          <span style={styles.label}>{t("contextWindow")} (K/M ok)</span>
+          <input style={styles.input} value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} placeholder="1000000 or 1M" />
         </label>
         <label style={styles.field}>
-          <span style={styles.label}>{t("maxTokens")}</span>
-          <input style={styles.input} type="number" value={maxTokens} onChange={(e) => setMaxTokens(Number(e.target.value))} />
+          <span style={styles.label}>{t("maxTokens")} (K/M ok)</span>
+          <input style={styles.input} value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder="131072 or 128K" />
         </label>
         <label style={styles.field}>
           <span style={styles.label}>{t("input")} (comma-separated)</span>
@@ -49,8 +60,10 @@ export function OverrideForm({ route, model, onClose, onSubmit, busy }: {
           <button style={styles.btn} onClick={onClose}>{t("cancel")}</button>
           <button style={styles.btnPrimary} disabled={busy} onClick={() => {
             const cap: Record<string, unknown> = {};
-            if (contextWindow > 0) cap.contextWindow = contextWindow;
-            if (maxTokens > 0) cap.maxTokens = maxTokens;
+            const cw = parseTokens(contextWindow);
+            const mt = parseTokens(maxTokens);
+            if (cw !== undefined && cw > 0) cap.contextWindow = cw;
+            if (mt !== undefined && mt > 0) cap.maxTokens = mt;
             if (input.trim()) cap.input = input.split(",").map((s) => s.trim()).filter(Boolean);
             if (efforts.trim()) { try { cap.reasoningEfforts = JSON.parse(efforts); } catch { /* ignore */ } }
             if (thinkingFormat.trim()) cap.compat = { ...(model.compat ?? {}), thinkingFormat: thinkingFormat.trim() };

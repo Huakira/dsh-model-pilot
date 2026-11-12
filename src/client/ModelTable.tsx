@@ -80,7 +80,7 @@ export function ModelTable({ models, matchinfo, onOverride, compact = false }: {
             <td style={styles.td}>{formatTokens(m.contextWindow)}</td>
             <td style={styles.td}>{formatTokens(m.maxTokens)}</td>
             <td style={styles.td}>{(m.input ?? []).join(", ") || "—"}</td>
-            <td style={{ ...styles.td, whiteSpace: "nowrap" }}>{effortsLabel(m.reasoningEfforts)}</td>
+            <td style={{ ...styles.td, maxWidth: 160, whiteSpace: "normal", wordBreak: "break-word" }}>{effortsLabel(m.reasoningEfforts)}</td>
             <td style={styles.td}>{String(m.compat?.thinkingFormat ?? "—")}</td>
             <td style={actionCell}><button style={styles.btn} onClick={() => onOverride(m)}>{t("override")}</button></td>
           </tr>
