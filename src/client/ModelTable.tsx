@@ -44,10 +44,16 @@ export function MatchBadge({ info }: { info: MatchInfoView | undefined }) {
   return <span title={title} style={{ ...styles.badge, ...toneStyle, marginLeft: 6 }}>{b.label}</span>;
 }
 
-export function ModelTable({ models, matchinfo, onOverride, compact = false, overridden }: {
+export function ModelTable({ models, matchinfo, onOverride, onMove, protocols, routeProtocol: routeProto, compact = false, overridden }: {
   models: ModelView[];
   matchinfo: Record<string, MatchInfoView> | undefined;
   onOverride: (model: ModelView) => void;
+  /** Offer "move this model to a mirror route under another protocol". */
+  onMove?: (model: ModelView, protocol: string) => void;
+  /** Protocols offered by the adapter (for the move menu). */
+  protocols?: string[];
+  /** The route's own protocol, excluded from the move menu. */
+  routeProtocol?: string;
   /** Narrow variant for the Models-page provider-card seat. */
   compact?: boolean;
   /** Model ids carrying a user override; rendered with a marker. */
@@ -65,6 +71,7 @@ export function ModelTable({ models, matchinfo, onOverride, compact = false, ove
       <thead>
         <tr>
           <th style={{ ...styles.th, maxWidth: compact ? 220 : undefined }}>{t("model")}</th>
+          <th style={styles.th}>{t("protocol")}</th>
           <th style={styles.th}>{t("contextWindow")}</th>
           <th style={styles.th}>{t("maxTokens")}</th>
           <th style={styles.th}>{t("input")}</th>
@@ -83,16 +90,30 @@ export function ModelTable({ models, matchinfo, onOverride, compact = false, ove
               <MatchBadge info={matchinfo?.[m.id]} />
               <div style={styles.muted}>{m.id}</div>
             </td>
+            <td style={styles.td}>{routeProto ?? "—"}</td>
             <td style={styles.td}>{formatTokens(m.contextWindow)}</td>
             <td style={styles.td}>{formatTokens(m.maxTokens)}</td>
             <td style={styles.td}>{(m.input ?? []).join(", ") || "—"}</td>
             <td style={{ ...styles.td, maxWidth: 160, whiteSpace: "normal", wordBreak: "break-word" }}>{effortsLabel(m.reasoningEfforts)}</td>
             <td style={styles.td}>{String(m.compat?.thinkingFormat ?? "—")}</td>
-            <td style={actionCell}><button style={styles.btn} onClick={() => onOverride(m)}>{t("override")}</button></td>
+            <td style={actionCell}>
+              {onMove && protocols && protocols.length > 1 && (
+                <select
+                  style={{ ...styles.btn, width: "auto", paddingRight: 4 }}
+                  value=""
+                  title={t("moveHint")}
+                  onChange={(e) => { const v = e.target.value; e.target.value = ""; if (v) onMove(m, v); }}
+                >
+                  <option value="">{t("moveTo")}</option>
+                  {protocols.filter((p) => p !== routeProto).map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              )}
+              <button style={styles.btn} onClick={() => onOverride(m)}>{t("override")}</button>
+            </td>
           </tr>
         ))}
         {(models ?? []).length === 0 && (
-          <tr><td style={styles.td} colSpan={7}>{t("noModels")}</td></tr>
+          <tr><td style={styles.td} colSpan={8}>{t("noModels")}</td></tr>
         )}
       </tbody>
     </table>

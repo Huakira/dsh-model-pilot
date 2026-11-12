@@ -178,7 +178,12 @@ export const styles: Record<string, React.CSSProperties> = {
   },
 
   muted: { fontSize: 12, lineHeight: "18px", color: "var(--dsw-alias-label-tertiary)" },
-  overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+  /**
+   * Portal-mounted modal layer. z-index must beat the official settings
+   * panel overlay (z-index:1000), or the modal's own mask covers the panel
+   * and its close button — the "X does not respond" bug.
+   */
+  overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 },
   modal: {
     background: "var(--dsw-alias-bg-layer-1, #fff)",
     borderRadius: "var(--dsw-radius-xl, 12px)",

@@ -57,6 +57,10 @@ const en: Record<string, string> = {
   openFullSettings: "Open Model Pilot settings",
   openFullSettingsShort: "Settings → Model Pilot",
   openFullSettingsHint: "Add / remove providers and manage backups in Settings → Model Pilot.",
+  moveTo: "Move to protocol…",
+  moveHint: "This model's endpoint speaks a different protocol? Move it to a mirror route sharing the same baseURL + key.",
+  movedMsg: "Moved {model} → {to} ({count} models there)",
+  mirroredBadge: "mirror",
 };
 
 const zh: Record<string, string> = {
@@ -117,6 +121,10 @@ const zh: Record<string, string> = {
   openFullSettings: "打开模型领航设置",
   openFullSettingsShort: "设置 → 模型领航",
   openFullSettingsHint: "在「设置 → 模型领航」里添加/删除 provider、管理备份。",
+  moveTo: "移动到协议…",
+  moveHint: "这个模型端点说的是别的协议？把它移到共享同一 baseURL + 密钥的镜像路由。",
+  movedMsg: "已移动 {model} → {to}（该路由现有 {count} 个模型）",
+  mirroredBadge: "镜像",
 };
 
 function pick(): Record<string, string> {

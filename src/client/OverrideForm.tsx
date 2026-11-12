@@ -7,6 +7,7 @@ import type { ModelView } from "./api.js";
 import { t } from "./i18n.js";
 import { styles } from "./styles.js";
 import { formatTokens } from "./ModelTable.js";
+import { Modal } from "./Modal.js";
 
 /** "262144" | "262K" | "1M" | "1.5M" → number; invalid → undefined. */
 function parseTokens(raw: string): number | undefined {
@@ -31,10 +32,7 @@ export function OverrideForm({ route, model, onClose, onSubmit, busy }: {
   const [efforts, setEfforts] = useState(model.reasoningEfforts ? JSON.stringify(model.reasoningEfforts) : "");
   const [thinkingFormat, setThinkingFormat] = useState(String(model.compat?.thinkingFormat ?? ""));
   return (
-    <div style={styles.overlay} onClick={onClose}>
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <div style={{ ...styles.h1, fontSize: 15 }}>{t("override")}: {model.id}</div>
-        <div style={styles.muted}>{route}</div>
+    <Modal title={`${t("override")}: ${model.id}`} subtitle={route} onClose={onClose}>
         <label style={styles.field}>
           <span style={styles.label}>{t("contextWindow")} (K/M ok)</span>
           <input style={styles.input} value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} placeholder="1000000 or 1M" />
@@ -70,7 +68,6 @@ export function OverrideForm({ route, model, onClose, onSubmit, busy }: {
             onSubmit(cap, false);
           }}>{t("save")}</button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

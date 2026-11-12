@@ -326,7 +326,9 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         const listing = await fetchListing(route, apiKey);
         const { models, added, kept, matchinfo } = buildModels(routeId, route, listing, overrides);
         matchinfoAll[routeId] = matchinfo;
-        if (models.length === 0 && !catalog?.providers.includes(routeId)) {
+        // Mirror routes (<route>-<protocol>) only carry hand-moved models that
+        // the listing may never advertise; do not treat an empty listing as fatal.
+        if (models.length === 0 && !catalog?.providers.includes(routeId) && !/-anthropic-messages$|-openai-completions$|-openai-responses$|-gemini$/.test(routeId)) {
           perRoute[routeId] = { error: "listing returned no models; kept previous models (a custom route cannot be empty)" };
           continue;
         }
@@ -499,6 +501,48 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
       const routeId = String(body.route ?? "");
       const modelId = String(body.model ?? "");
       if (!routeId || !modelId) return json({ ok: false, error: "route and model required" }, 400);
+
+      // Protocol move: a model the route's protocol does not serve is MOVED to
+      // a mirror route "<route>-<protocol>" sharing baseURL + key (pi-ai's
+      // resolveEntry ignores a per-model api, so protocol is route-level).
+      const moveTo = typeof body.moveToProtocol === "string" && body.moveToProtocol ? body.moveToProtocol : undefined;
+      if (moveTo) {
+        if (supportedProtocols && !supportedProtocols.includes(moveTo)) {
+          return json({ ok: false, error: `protocol "${moveTo}" is not supported by the installed adapter (offers: ${supportedProtocols.join(", ")})` }, 400);
+        }
+        if (!seams.settings) return json({ ok: false, error: "settings seam unavailable" }, 500);
+        await catalogReady;
+        const { providers } = readProviders(settings as SettingsSeam);
+        const next = structuredClone(providers);
+        const source = next[routeId];
+        const model = source?.models?.find((m) => m.id === modelId);
+        if (!source || !model) return json({ ok: false, error: `model "${modelId}" not found on route "${routeId}"` }, 400);
+        const mirrorId = `${routeId}-${moveTo}`;
+        const mirror = next[mirrorId] ?? {
+          displayName: `${source.displayName ?? routeId} · ${moveTo}`,
+          api: moveTo as Protocol,
+          baseURL: source.baseURL,
+          apiKeyEnv: source.apiKeyEnv,
+        };
+        // Same wire format? A completions→responses move changes the listing
+        // protocol too; models are hand-carried so no re-listing here.
+        const stripped = { ...model };
+        delete stripped.stale;
+        source.models = (source.models ?? []).filter((m) => m.id !== modelId);
+        mirror.models = [...(mirror.models ?? []).filter((m) => m.id !== modelId), stripped];
+        next[mirrorId] = mirror;
+        next[routeId] = source;
+        // Move match attribution too, so the badge stays truthful.
+        const mi = loadMatchInfo();
+        if (mi[routeId]?.[modelId]) {
+          mi[mirrorId] = { ...(mi[mirrorId] ?? {}), [modelId]: mi[routeId][modelId] };
+          delete mi[routeId][modelId];
+          saveMatchInfo(mi);
+        }
+        await writer.writeProviders(next, `protocol move ${routeId}/${modelId} → ${mirrorId}`);
+        return json({ ok: true, moved: true, from: routeId, to: mirrorId, model: modelId, mirrorModels: mirror.models.length, sourceModels: source.models.length });
+      }
+
       const overrides = loadOverrides();
       const key = `${routeId}/${modelId}`;
       if (body.clear === true) {

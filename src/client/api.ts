@@ -71,8 +71,8 @@ export const api = {
   upsertProvider: (p: { id: string; displayName?: string; baseURL?: string; api?: string; apiKey?: string; apiKeyEnv?: string }) =>
     call<{ ok: boolean; id: string; detectedProtocol?: string; modelCount?: number; route?: { api?: string } }>("/provider", "POST", { action: "upsert", ...p }),
   removeProvider: (id: string) => call<{ ok: boolean }>("/provider", "POST", { action: "remove", id }),
-  override: (route: string, model: string, capability: Record<string, unknown>, clear = false) =>
-    call<{ ok: boolean }>("/override", "POST", { route, model, capability, clear }),
+  override: (route: string, model: string, capability: Record<string, unknown>, clear = false, moveToProtocol?: string) =>
+    call<{ ok: boolean; moved?: boolean; from?: string; to?: string; model?: string; mirrorModels?: number; sourceModels?: number }>("/override", "POST", { route, model, capability, clear, ...(moveToProtocol ? { moveToProtocol } : {}) }),
   rollback: (backupId: string) => call<{ ok: boolean }>("/rollback", "POST", { backupId }),
   options: (patch: Record<string, unknown>) => call<{ ok: boolean; options: Record<string, unknown> }>("/options", "POST", patch),
   probe: (route: string, model?: string) => call<{ ok: boolean; reachable: boolean; status?: number; error?: string; protocol: string }>("/probe", "POST", { route, model }),

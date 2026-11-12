@@ -90,6 +90,12 @@ export function ProviderCardPilot(props: ProviderCardOwnerProps): React.ReactEle
           matchinfo={matchinfo}
           overridden={new Set(Object.keys(state?.overrides ?? {}).filter((k) => k.startsWith(routeId + "/")).map((k) => k.slice(routeId.length + 1)))}
           onOverride={(m) => setOverrideTarget(m)}
+          onMove={state?.supportedProtocols?.length ? (m, protocol) => run(async () => {
+            const r = await api.override(routeId, m.id, {}, false, protocol);
+            return t("movedMsg").replace("{model}", m.id).replace("{to}", r.to ?? "").replace("{count}", String(r.mirrorModels ?? 0));
+          }, t("ok")) : undefined}
+          protocols={state?.supportedProtocols}
+          routeProtocol={p.api}
           compact
         />
       )}

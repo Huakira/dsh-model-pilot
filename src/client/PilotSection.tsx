@@ -9,6 +9,7 @@ import { t } from "./i18n.js";
 import { styles } from "./styles.js";
 import { ModelTable } from "./ModelTable.js";
 import { OverrideForm } from "./OverrideForm.js";
+import { Modal } from "./Modal.js";
 
 /** Short, human label for a capability source (shown as a model badge). */
 const PROTOCOLS = ["openai-completions", "openai-responses", "anthropic-messages", "gemini"];
@@ -107,6 +108,13 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
                 matchinfo={state?.matchinfo?.[id]}
                 overridden={new Set(Object.keys(state?.overrides ?? {}).filter((k) => k.startsWith(id + "/")).map((k) => k.slice(id.length + 1)))}
                 onOverride={(m) => setOverrideTarget({ route: id, model: m })}
+                onMove={state?.supportedProtocols?.length ? (m, protocol) => run(async () => {
+                  const r = await api.override(id, m.id, {}, false, protocol);
+                  setOverrideTarget(null);
+                  return t("movedMsg").replace("{model}", m.id).replace("{to}", r.to ?? "").replace("{count}", String(r.mirrorModels ?? 0));
+                }, t("ok")) : undefined}
+                protocols={state?.supportedProtocols ?? PROTOCOLS}
+                routeProtocol={p.api}
               />
             )}
           </div>
@@ -209,9 +217,7 @@ function ProviderForm({ initial, protocols, onClose, onSubmit, busy }: {
   const [apiKey, setApiKey] = useState("");
   const editing = Boolean(initial?.id);
   return (
-    <div style={styles.overlay} onClick={onClose}>
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <div style={{ ...styles.h1, fontSize: 17, marginBottom: 14 }}>{editing ? t("override") : t("addProvider")}</div>
+    <Modal title={editing ? t("override") : t("addProvider")} onClose={onClose}>
         <label style={styles.field}>
           <span style={styles.label}>{t("routeId")}</span>
           <input style={styles.input} value={id} disabled={editing} onChange={(e) => setId(e.target.value)} placeholder="completions" />
@@ -240,7 +246,6 @@ function ProviderForm({ initial, protocols, onClose, onSubmit, busy }: {
           <button style={styles.btn} onClick={onClose}>{t("cancel")}</button>
           <button style={styles.btnPrimary} disabled={busy || !id || !baseURL} onClick={() => onSubmit({ id, displayName, baseURL, api: apiProto, apiKey: apiKey || undefined })}>{t("save")}</button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
