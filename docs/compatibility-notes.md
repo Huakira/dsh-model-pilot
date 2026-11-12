@@ -123,6 +123,14 @@ docs/             本文
 
 ## 9.  版本变更记录
 
+- **0.1.11**（2026-11-11）models.dev 升主数据源 + stale 模型默认清理 + efforts 显示修复：
+  - **models.dev 为主**：`SOURCE_CONFIDENCE` models.dev 0.95 > pi-ai-catalog 0.85 > endpoint 0.4 > family-default 0.3；overlay 顺序 family→endpoint→pi-ai→models.dev（最后覆盖最高优先）。pi-ai 目录 2026-11-10 生成后没跟上 OpenAI 10/11 调整（gpt-6 全系列仍标 272K 旧默认值），models.dev 实时 24h TTL 全量（235 providers/8988 模型）才是准确数据。实测 gpt-6.1-sol：pi-ai=272000（过时）vs models.dev=1050000（正确）。
+  - **多数投票**：跨 provider 冲突（754 模型中 77 个 10% 不一致）取最常见值；dedup 相同 capability。
+  - **effort 映射**：models.dev `none` → pi-ai `off:null`；`video/pdf/audio` 模态预过滤（适配器只收 text/image）。
+  - **byBase 索引**：models.dev 也建 `byBase`（同 catalog），支持 base-id 回退匹配（vendor 前缀/`:tag`/变体后缀）。修复 matcher 传参 bug：`modelsDevBase` 回调须收原始 id（由 `lookupBase` 内部做 `baseModelId`）。
+  - **stale 模型默认清理**：`deleteSync` 默认 false→true（上游已下架的模型从选择器消失，不再堆积）；schema default true；config `?? true`。
+  - **efforts 显示**：`effortsLabel` 过滤 `off` 键（选择器本来就不显示 off，插件页对齐）；efforts 列 `whiteSpace:nowrap` 防溢出。
+  - 56 测试全过；typecheck 净。
 - **0.1.10**（2026-11-11）compact 卡片显示总上下文 + K/M 数字格式化：
   - compact 变体恢复 contextWindow 列（用户要看到总上下文）。
   - 新增 `formatTokens`：131072→"128K"、1048576→"1M"、1000000→"1M"（≥10 取整，<10 保留 1 位小数），替代 `toLocaleString()` 纯数字。

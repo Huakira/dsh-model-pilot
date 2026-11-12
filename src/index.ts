@@ -42,7 +42,7 @@ const FALLBACK_MAX_TOKENS = 8192;
 export const Config = Schema.object({
   managedRoutes: Schema.array(Schema.string()).default([]),
   probeEnabled: Schema.boolean().default(false),
-  deleteSync: Schema.boolean().default(false),
+  deleteSync: Schema.boolean().default(true),
   autoRefresh: Schema.boolean().default(false),
   refreshIntervalHours: Schema.natural().min(1).default(24),
   backupKeep: Schema.natural().min(1).default(10),
@@ -100,7 +100,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     ...DEFAULT_OPTIONS,
     managedRoutes: config.managedRoutes ?? [],
     probeEnabled: config.probeEnabled ?? false,
-    deleteSync: config.deleteSync ?? false,
+    deleteSync: config.deleteSync ?? true,
     autoRefresh: config.autoRefresh ?? false,
     refreshIntervalHours: config.refreshIntervalHours ?? 24,
     backupKeep: config.backupKeep ?? 10,
@@ -263,7 +263,13 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
 
     for (const row of listing) {
       seen.add(row.id);
-      const match = matchModel({ id: row.id, endpoint: row, catalog, modelsDev: (id) => modelsDev.lookup(id), routeProtocol: protocol });
+      const match = matchModel({
+        id: row.id,
+        endpoint: row,
+        catalog,
+        modelsDev: (mid) => modelsDev.lookup(mid),
+        modelsDevBase: (mid) => modelsDev.lookupBase(mid),        routeProtocol: protocol,
+      });
       const cap = match.capability;
       matchinfo[row.id] = { sources: match.sources, confidence: match.confidence, baseIdUsed: match.baseIdUsed };
       const model: StoredModel = {

@@ -31,15 +31,17 @@ export interface MatchInputs {
   /** Row from the upstream listing (id is authoritative; caps may be sparse). */
   endpoint?: ListingRow;
   catalog?: CatalogIndex;
-  /** Optional models.dev capability lookup (secondary source). */
+  /** Optional models.dev capability lookup (primary source — kept freshest). */
   modelsDev?: (id: string) => ModelCapability | undefined;
+  /** Optional models.dev base-id fallback lookup (receives the raw model id). */
+  modelsDevBase?: (id: string) => ModelCapability | undefined;
   /** Route protocol; when set it is authoritative over the family suggestion. */
   routeProtocol?: Protocol;
 }
 
 const SOURCE_CONFIDENCE: Record<CapabilitySource, number> = {
-  "pi-ai-catalog": 0.9,
-  "models.dev": 0.75,
+  "pi-ai-catalog": 0.85,
+  "models.dev": 0.95,
   endpoint: 0.4,
   "family-default": 0.3,
 };
@@ -56,7 +58,7 @@ function overlay(under: ModelCapability, over: ModelCapability): ModelCapability
 }
 
 export function matchModel(inputs: MatchInputs): MatchResult {
-  const { id, endpoint, catalog, modelsDev, routeProtocol } = inputs;
+  const { id, endpoint, catalog, modelsDev, modelsDevBase, routeProtocol } = inputs;
   const protocol = routeProtocol ?? suggestProtocol(id);
   const sources: CapabilitySource[] = [];
   const matchedProviders: string[] = [];
@@ -81,17 +83,7 @@ export function matchModel(inputs: MatchInputs): MatchResult {
     }
   }
 
-  // 3. models.dev (secondary).
-  if (modelsDev) {
-    const md = modelsDev(id);
-    if (md && Object.keys(md).length > 0) {
-      cap = overlay(cap, md);
-      sources.push("models.dev");
-    }
-  }
-
-  // 4. pi-ai catalog (primary). Merge across providers; first non-undefined wins
-  //    per field, but every describing provider is recorded for attribution.
+  // 3. pi-ai catalog (secondary: static, can lag on recent releases).
   let baseIdUsed: string | undefined;
   if (catalog) {
     let entries = lookupCatalog(catalog, id);
@@ -114,6 +106,26 @@ export function matchModel(inputs: MatchInputs): MatchResult {
       // we derived for THIS route unless the catalog names one explicitly.
       cap = overlay(cap, catalogCap);
       sources.push("pi-ai-catalog");
+    }
+  }
+
+  // 4. models.dev (primary: continuously updated, majority-voted). Overlay on
+  //    top of catalog so fresher data wins field by field.
+  if (modelsDev) {
+    const md = modelsDev(id);
+    if (md && Object.keys(md).length > 0) {
+      cap = overlay(cap, md);
+      sources.push("models.dev");
+    } else if (modelsDevBase) {
+      const base = baseModelId(id);
+      if (base !== normalizeId(id) && base !== stripRoutingPrefix(id)) {
+        const mdBase = modelsDevBase(id);
+        if (mdBase && Object.keys(mdBase).length > 0) {
+          cap = overlay(cap, mdBase);
+          sources.push("models.dev");
+          if (!baseIdUsed) baseIdUsed = base;
+        }
+      }
     }
   }
 

@@ -149,7 +149,7 @@ describe("matcher", () => {
   const index = buildCatalogIndex(fixtureLoader);
   it("matches a catalog model with high confidence and attribution", () => {
     const r = matchModel({ id: "deepseek-v4.1-flash-1017", catalog: index, routeProtocol: "openai-completions" });
-    expect(r.confidence).toBeGreaterThanOrEqual(0.9);
+    expect(r.confidence).toBeGreaterThanOrEqual(0.85);
     expect(r.sources).toContain("pi-ai-catalog");
     expect(r.matchedProviders).toContain("opencode");
     expect(r.capability.contextWindow).toBe(1000000);

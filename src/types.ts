@@ -161,7 +161,8 @@ export interface PilotOptions {
   sourcePriority: CapabilitySource[];
   /** Whether family-level live probing is allowed (M2). */
   probeEnabled: boolean;
-  /** Whether to remove models no longer advertised upstream. */
+  /** Whether to remove models no longer advertised upstream. Default true —
+   * stale models clutter the picker and mislead about what is available. */
   deleteSync: boolean;
   /** Auto refresh on a timer. */
   autoRefresh: boolean;
@@ -172,9 +173,9 @@ export interface PilotOptions {
 
 export const DEFAULT_OPTIONS: PilotOptions = {
   managedRoutes: [],
-  sourcePriority: ["pi-ai-catalog", "models.dev", "endpoint", "family-default"],
+  sourcePriority: ["models.dev", "pi-ai-catalog", "endpoint", "family-default"],
   probeEnabled: false,
-  deleteSync: false,
+  deleteSync: true,
   autoRefresh: false,
   refreshIntervalHours: 24,
   backupKeep: 10,
