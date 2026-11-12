@@ -123,6 +123,10 @@ docs/             本文
 
 ## 9. 版本变更记录
 
+- **0.1.4**（2026-11-11）修「input 模态被 schema 拒绝」：
+  - **根因**：pi-ai 的 `input: z.array(z.union(MODALITIES))`，`MODALITIES = Object.keys({text:true,image:true})`（适配器 `lib/index.js:282/1040`），**只接受 text/image**。能力次源 models.dev 会带 `video`/`audio`/`pdf`，匹配器原样写入 → 严格校验报 `$.providers.<route>.models[N].input[K] expected "text" | "image" but got "video"`。
+  - **修复**：writer 新增 `extractInputModalities(schema)`（从 model 对象 `input` 字段按 array→union→const 动态读允许模态，随 DSH 版本自适应）+ `sanitizeInput(providers,allowed)`，在 `writeProviders` 统一 choke point 过滤每个 `model.input` 与 `route.defaultInput`，剥掉不支持的模态；过滤后为空则回退 `text`。覆盖添加/刷新/覆盖/回滚所有写入路径。剥离时写日志 `stripped unsupported input modalities: …`。
+  - 回归测试 +5（合成 schema 提取 / 未来加 video 自适应 / 不可 introspect 回退 / 净化与回退 / Writer 端到端），共 40 通过。
 - **0.1.3**（2026-11-11）修复「添加 provider 报错」并新增协议智能匹配：
   - **根因**：pi-ai 写入即严格校验，`resolveRouteModels`（`dsh-llm-pi-ai/lib/index.js:679`）对**自定义网关 route**（route 名不在内置目录）要求 `models[]` 非空，否则抛 `resolves no models; the installed catalog does not describe this route, so its models must be listed in configuration`。旧版「先加空 route 再刷新」在添加这一步就被拒。
   - **修复**：provider upsert 改为**添加即填充**——同一步内拉上游 listing + `buildModels` 后再写，绝不写空 route；listing 为空且非内置目录 route 时返回明确 400 错误且不落盘。

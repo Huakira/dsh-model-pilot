@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
   Backup,
+  Modality,
   ModelCompat,
   ProviderRoute,
   SettingsDescriptor,
@@ -94,6 +95,36 @@ export function extractSupportedProtocols(schema: unknown): string[] | undefined
   return found ? [...protocols] : undefined;
 }
 
+/**
+ * Read the input modalities the installed adapter accepts, from the `input`
+ * field of any model-profile object in the schema (array → union → consts).
+ * 0.2.2-rc.1 accepts only text/image; a later version may add video/audio.
+ * Capability sources (models.dev, catalog) can advertise modalities the adapter
+ * rejects, so writes must be filtered to this set. Returns undefined when the
+ * schema cannot be introspected.
+ */
+export function extractInputModalities(schema: unknown): Set<string> | undefined {
+  const root = schema as { uid?: number; refs?: Record<string, SchemaNode> } | undefined;
+  if (!root?.refs || root.uid === undefined) return undefined;
+  const refs = root.refs;
+  const modalities = new Set<string>();
+  let found = false;
+  const collectConsts = (nodeId: number): void => {
+    const node = refs[String(nodeId)];
+    if (!node) return;
+    if (node.type === "const" && typeof node.value === "string") modalities.add(node.value);
+    else if (node.type === "union" && Array.isArray(node.list)) for (const id of node.list) collectConsts(id);
+    else if (node.type === "array" && node.inner !== undefined) collectConsts(node.inner);
+  };
+  for (const node of Object.values(refs)) {
+    if (node?.type === "object" && node.dict && "input" in node.dict) {
+      found = true;
+      collectConsts(node.dict.input);
+    }
+  }
+  return found && modalities.size > 0 ? modalities : undefined;
+}
+
 /** Deep-clone providers, dropping compat keys the live schema does not accept. */
 export function stripUnknownCompat(
   providers: Record<string, ProviderRoute>,
@@ -123,6 +154,45 @@ export function stripUnknownCompat(
         mo[id] = o.compat ? { ...o, compat: cleanCompat(o.compat) } : override;
       }
       p.modelOverrides = mo as ProviderRoute["modelOverrides"];
+    }
+    next[route] = p;
+  }
+  return { providers: next, stripped };
+}
+
+/**
+ * Filter every model.input and route.defaultInput to the modalities the live
+ * schema accepts, dropping unsupported ones (e.g. models.dev "video" on an
+ * adapter that only takes text/image). A list left empty after filtering falls
+ * back to "text" so the model still accepts something. Returns the cleaned
+ * providers plus the distinct modalities that were stripped (for logging).
+ */
+export function sanitizeInput(
+  providers: Record<string, ProviderRoute>,
+  allowed: Set<string>,
+): { providers: Record<string, ProviderRoute>; stripped: string[] } {
+  const stripped: string[] = [];
+  const fallback = allowed.has("text") ? "text" : [...allowed][0];
+  const cleanList = (list: unknown): Modality[] | undefined => {
+    if (!Array.isArray(list)) return undefined;
+    const out: Modality[] = [];
+    for (const v of list) {
+      if (typeof v === "string" && allowed.has(v)) out.push(v as Modality);
+      else if (typeof v === "string" && !stripped.includes(v)) stripped.push(v);
+    }
+    if (out.length === 0 && list.length > 0 && fallback) out.push(fallback as Modality);
+    return out;
+  };
+  const next: Record<string, ProviderRoute> = {};
+  for (const [route, profile] of Object.entries(providers)) {
+    const p: ProviderRoute = { ...profile };
+    const di = cleanList(p.defaultInput);
+    if (di !== undefined) p.defaultInput = di;
+    if (Array.isArray(p.models)) {
+      p.models = p.models.map((m) => {
+        const inp = cleanList(m.input);
+        return inp !== undefined ? { ...m, input: inp } : m;
+      });
     }
     next[route] = p;
   }
@@ -209,6 +279,14 @@ export class Writer {
       payload = result.providers;
       stripped = result.stripped;
       if (stripped.length > 0) this.log(`stripped unsupported compat keys: ${stripped.join(", ")}`);
+    }
+    const allowedInput = extractInputModalities(descriptor?.schema);
+    if (allowedInput) {
+      const result = sanitizeInput(payload, allowedInput);
+      payload = result.providers;
+      if (result.stripped.length > 0) {
+        this.log(`stripped unsupported input modalities: ${result.stripped.join(", ")} (adapter accepts: ${[...allowedInput].join(", ")})`);
+      }
     }
 
     let attempt = 0;
