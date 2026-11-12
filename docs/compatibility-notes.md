@@ -186,3 +186,10 @@ docs/             本文
 
 ### 版本流水
 - 0.1.15 → 0.1.16（commits `2eeed43` 功能 + `ce12792` version bump，已推 GitHub）。56 测试全过，typecheck 干净。live 日志 seams 全 true。
+
+## 0.1.17 — 修复 reasoningEfforts 的 off 键被写成 "false"（2026-11-12）
+
+- 现象：provider 列表消失且加不回去。`llm-pi-ai` 校验失败（`reasoningEfforts ... but got {"low":..,"false":null}`），整个插件项不激活，model-pilot 报 `no configurable plugin entry "llm-pi-ai"`。
+- 成因：有环节按 YAML 1.1 解析 `cordis.patch.yml`，把裸键 `off` 读成布尔 false，再写回成字符串键 `'false'`；schema 只认 off/minimal/low/medium/high/xhigh/max。证据：11:52 快照里 26 个模型的 `off` 全变成 `false`，03:54 的快照仍是 `off`。具体是哪个写入方没定位。
+- 修复：`sanitizeReasoningEfforts` 把键 `"false"` 当作 `off`，之后 model-pilot 的任何写入都会自愈。它管不到插件项已失效时的手工修复，那种情况要先改文件再重启。
+- 版本流水：0.1.16 → 0.1.17，57 测试全过。

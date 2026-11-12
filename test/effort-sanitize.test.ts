@@ -71,6 +71,14 @@ describe("reasoningEffort level gating", () => {
     expect(gw.models[6].reasoningEfforts).toEqual({ high: "high" }); // valid non-off kept
   });
 
+  it("repairs the YAML-1.1 mangled key \"false\" back to off", () => {
+    const { providers, stripped } = sanitizeReasoningEfforts({
+      gw: { baseURL: "https://x/v1", models: [{ id: "a", reasoningEfforts: { low: "low", high: "high", false: null } }] },
+    } as any, new Set(LEVELS));
+    expect(stripped).toEqual([]);
+    expect((providers.gw as any).models[0].reasoningEfforts).toEqual({ low: "low", high: "high", off: null });
+  });
+
   it("Writer.writeProviders strips none before the settings write", async () => {
     let stored: any = {};
     let revision = 0;

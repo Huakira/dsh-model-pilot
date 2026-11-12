@@ -263,7 +263,11 @@ export function sanitizeReasoningEfforts(
         if (re === false || re === undefined) return m; // disabled | inherited
         if (re === null || typeof re !== "object") return { ...m, reasoningEfforts: false };
         const out: Record<string, string | null> = {};
-        for (const [k, v] of Object.entries(re)) {
+        // A YAML 1.1 round-trip reads the bare key `off` as boolean false and writes it
+        // back as the string key "false", which the adapter schema then rejects (the whole
+        // llm-pi-ai entry stops activating). Treat "false" as "off" so any rewrite heals it.
+        const entries = Object.entries(re).map(([k, v]) => [k === "false" ? "off" : k, v] as const);
+        for (const [k, v] of entries) {
           if (!allowed.has(k)) { if (!stripped.includes(k)) stripped.push(k); continue; }
           if (k === "off") {
             if (typeof v === "string" || v === null) out[k] = v;
