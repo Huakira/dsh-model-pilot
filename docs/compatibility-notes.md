@@ -123,6 +123,9 @@ docs/             本文
 
 ## 9.  版本变更记录
 
+- **0.1.9**（2026-11-11）Models 页卡片紧凑表格 + 打开设置提示：
+  - **compact 变体**：`ModelTable` 加 `compact` prop（模型列 maxWidth:220 ellipsis、操作列 width:1 nowrap、隐藏 contextWindow 列），给 Models 页 provider-card 窄卡片用，修「覆盖按钮溢出」。
+  - **打开设置提示**：provider-card 加「Settings → Model Pilot」提示（owner props 无打开设置回调，DSH 0.2.2-rc.1 未暴露该接缝，故降级为提示文案；若未来 owner 传 `openSettings` 则自动变跳转链接）。
 - **0.1.8**（2026-11-11）UI 重做 + 嵌入官方 Models 页：
   - **官方主题样式**：客户端所有样式改用 DSH `--dsw-alias-*` 设计变量（卡片 `--dsw-alias-settings-card-fill/stroke`、次/主/危险按钮、输入框、徽标），与原生 Models 设置页在任何主题下视觉一致，不再用硬编码颜色。
   - **嵌入官方 Models 页**：新增 `ModelsIntegration.tsx` 注册 `settings.models.provider-card`（keyed by settingsNs=`llm-pi-ai`）——每个 pi-ai 网关路由卡片内嵌自动匹配的模型表 + 刷新/覆盖；`settings.models.footer` 放全局「全部刷新」。抽取共享 `ModelTable`/`OverrideForm` 复用到独立页与卡片。
