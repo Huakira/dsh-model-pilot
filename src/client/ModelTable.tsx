@@ -7,6 +7,20 @@ import type { ModelView, MatchInfoView } from "./api.js";
 import { t } from "./i18n.js";
 import { styles } from "./styles.js";
 
+/** 131072 → "128K", 1048576 → "1M", 1000000 → "1M" (SI-ish, rounds to 3 sig figs). */
+export function formatTokens(n: number | undefined): string {
+  if (n === undefined || n === null) return "—";
+  if (n >= 1_000_000) {
+    const v = n / 1_000_000;
+    return `${v >= 10 ? Math.round(v) : Math.round(v * 10) / 10}M`;
+  }
+  if (n >= 1_000) {
+    const v = n / 1_000;
+    return `${v >= 10 ? Math.round(v) : Math.round(v * 10) / 10}K`;
+  }
+  return String(n);
+}
+
 export function effortsLabel(e: ModelView["reasoningEfforts"]): string {
   if (e === false) return "—";
   if (!e) return "—";
@@ -46,7 +60,7 @@ export function ModelTable({ models, matchinfo, onOverride, compact = false }: {
       <thead>
         <tr>
           <th style={{ ...styles.th, maxWidth: compact ? 220 : undefined }}>{t("model")}</th>
-          {!compact && <th style={styles.th}>{t("contextWindow")}</th>}
+          <th style={styles.th}>{t("contextWindow")}</th>
           <th style={styles.th}>{t("maxTokens")}</th>
           <th style={styles.th}>{t("input")}</th>
           <th style={styles.th}>{t("efforts")}</th>
@@ -63,8 +77,8 @@ export function ModelTable({ models, matchinfo, onOverride, compact = false }: {
               <MatchBadge info={matchinfo?.[m.id]} />
               <div style={styles.muted}>{m.id}</div>
             </td>
-            {!compact && <td style={styles.td}>{m.contextWindow?.toLocaleString() ?? "—"}</td>}
-            <td style={styles.td}>{m.maxTokens?.toLocaleString() ?? "—"}</td>
+            <td style={styles.td}>{formatTokens(m.contextWindow)}</td>
+            <td style={styles.td}>{formatTokens(m.maxTokens)}</td>
             <td style={styles.td}>{(m.input ?? []).join(", ") || "—"}</td>
             <td style={styles.td}>{effortsLabel(m.reasoningEfforts)}</td>
             <td style={styles.td}>{String(m.compat?.thinkingFormat ?? "—")}</td>
@@ -72,7 +86,7 @@ export function ModelTable({ models, matchinfo, onOverride, compact = false }: {
           </tr>
         ))}
         {(models ?? []).length === 0 && (
-          <tr><td style={styles.td} colSpan={compact ? 6 : 7}>{t("noModels")}</td></tr>
+          <tr><td style={styles.td} colSpan={7}>{t("noModels")}</td></tr>
         )}
       </tbody>
     </table>
