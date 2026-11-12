@@ -51,6 +51,9 @@ const en: Record<string, string> = {
   addedMsg: "Saved · protocol {protocol} · {count} models",
   estimated: "est.",
   matchedBase: "matched via {base}",
+  pilotManaged: "Model Pilot",
+  pilotFooterHint: "Model Pilot keeps these routes' model capabilities auto-matched from official sources.",
+  openFullSettings: "Open Model Pilot settings",
 };
 
 const zh: Record<string, string> = {
@@ -105,6 +108,9 @@ const zh: Record<string, string> = {
   addedMsg: "已保存 · 协议 {protocol} · {count} 个模型",
   estimated: "估算",
   matchedBase: "经 {base} 匹配",
+  pilotManaged: "模型领航",
+  pilotFooterHint: "模型领航持续从官方源自动匹配这些路由的模型能力。",
+  openFullSettings: "打开模型领航设置",
 };
 
 function pick(): Record<string, string> {

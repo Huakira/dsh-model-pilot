@@ -6,56 +6,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api, type StateResponse, type ProviderView, type ModelView, type MatchInfoView } from "./api.js";
 import { t } from "./i18n.js";
-
-const PROTOCOLS = ["openai-completions", "openai-responses", "anthropic-messages", "gemini"];
+import { styles } from "./styles.js";
+import { ModelTable } from "./ModelTable.js";
+import { OverrideForm } from "./OverrideForm.js";
 
 /** Short, human label for a capability source (shown as a model badge). */
-function sourceBadge(info: MatchInfoView | undefined): { label: string; tone: "authoritative" | "partial" | "guess" } | null {
-  if (!info) return null;
-  const best = info.sources.includes("pi-ai-catalog") ? "authoritative" : info.sources.includes("models.dev") ? "authoritative" : "guess";
-  if (best === "authoritative") return { label: info.sources.includes("pi-ai-catalog") ? "pi-ai" : "models.dev", tone: "authoritative" };
-  return { label: t("estimated"), tone: "guess" };
-}
-
-function MatchBadge({ info }: { info: MatchInfoView | undefined }) {
-  const b = sourceBadge(info);
-  if (!b) return null;
-  const bg = b.tone === "authoritative" ? "#e6f0e6" : "#fdf3e3";
-  const fg = b.tone === "authoritative" ? "#2c6e2c" : "#a86a00";
-  const title = info?.baseIdUsed ? `${info.sources.join(", ")} → ${info.baseIdUsed}` : (info?.sources.join(", ") ?? "");
-  return <span title={title} style={{ ...styles.badge, marginLeft: 6, background: bg, color: fg }}>{b.label}</span>;
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  page: { maxWidth: 960, color: "var(--dsw-alias-label-primary, #1a1a1a)", fontFamily: "inherit", padding: "4px 2px 40px" },
-  h1: { fontSize: 20, fontWeight: 650, margin: "0 0 2px" },
-  sub: { fontSize: 13, opacity: 0.7, margin: "0 0 18px" },
-  section: { margin: "22px 0 8px", fontSize: 15, fontWeight: 600 },
-  card: { border: "1px solid var(--dsw-alias-border, #e2e2e2)", borderRadius: 10, padding: 14, marginBottom: 12, background: "var(--dsw-alias-bg-subtle, #fafafa)" },
-  row: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
-  spread: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" },
-  btn: { border: "1px solid var(--dsw-alias-border, #ccc)", borderRadius: 7, padding: "5px 12px", fontSize: 13, cursor: "pointer", background: "var(--dsw-alias-bg, #fff)", color: "inherit" },
-  btnPrimary: { border: "none", borderRadius: 7, padding: "6px 14px", fontSize: 13, cursor: "pointer", background: "var(--dsw-alias-brand, #3b6ef0)", color: "#fff" },
-  btnDanger: { border: "1px solid #e0b4b4", borderRadius: 7, padding: "5px 12px", fontSize: 13, cursor: "pointer", background: "#fff5f5", color: "#b03030" },
-  input: { border: "1px solid var(--dsw-alias-border, #ccc)", borderRadius: 7, padding: "6px 10px", fontSize: 13, background: "var(--dsw-alias-bg, #fff)", color: "inherit", width: "100%" },
-  label: { fontSize: 12, opacity: 0.75, display: "block", marginBottom: 3 },
-  field: { marginBottom: 10, flex: "1 1 200px", minWidth: 180 },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: 12.5, marginTop: 8 },
-  th: { textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--dsw-alias-border, #e2e2e2)", opacity: 0.7, fontWeight: 600, whiteSpace: "nowrap" },
-  td: { padding: "6px 8px", borderBottom: "1px solid var(--dsw-alias-border, #f0f0f0)", verticalAlign: "top" },
-  badge: { fontSize: 11, padding: "1px 7px", borderRadius: 20, background: "var(--dsw-alias-bg-muted, #eee)", whiteSpace: "nowrap" },
-  toast: { padding: "8px 12px", borderRadius: 8, fontSize: 13, margin: "10px 0", background: "#eef6ee", border: "1px solid #cfe6cf", color: "#2c6e2c" },
-  toastErr: { padding: "8px 12px", borderRadius: 8, fontSize: 13, margin: "10px 0", background: "#fdeeee", border: "1px solid #f0cccc", color: "#a33" },
-  muted: { opacity: 0.6, fontSize: 12 },
-  overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
-  modal: { background: "var(--dsw-alias-bg, #fff)", borderRadius: 12, padding: 20, width: "min(560px, 92vw)", maxHeight: "86vh", overflow: "auto", color: "var(--dsw-alias-label-primary, #1a1a1a)" },
-};
-
-function effortsLabel(e: ModelView["reasoningEfforts"]): string {
-  if (e === false) return "—";
-  if (!e) return "—";
-  return Object.keys(e).join("/");
-}
+const PROTOCOLS = ["openai-completions", "openai-responses", "anthropic-messages", "gemini"];
 
 export function PilotSection(_props: { close?: () => void }): React.ReactElement {
   const [state, setState] = useState<StateResponse | null>(null);
@@ -117,7 +73,7 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
       {toast && <div style={toast.err ? styles.toastErr : styles.toast}>{toast.msg}</div>}
 
       <div style={styles.spread}>
-        <div style={styles.section}>{t("providers")}</div>
+        <div style={{ ...styles.section, margin: 0 }}>{t("providers")}</div>
         <div style={styles.row}>
           <button style={styles.btn} disabled={busy} onClick={() => run(() => api.refresh(), t("ok"))}>{t("refreshAll")}</button>
           <button style={styles.btnPrimary} disabled={busy} onClick={() => { setEditRoute(null); setAddOpen(true); }}>{t("addProvider")}</button>
@@ -146,35 +102,11 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
             </div>
 
             {isOpen && (
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>{t("model")}</th>
-                    <th style={styles.th}>{t("contextWindow")}</th>
-                    <th style={styles.th}>{t("maxTokens")}</th>
-                    <th style={styles.th}>{t("input")}</th>
-                    <th style={styles.th}>{t("efforts")}</th>
-                    <th style={styles.th}>{t("thinkingFormat")}</th>
-                    <th style={styles.th}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(p.models ?? []).map((m) => (
-                    <tr key={m.id}>
-                      <td style={styles.td}>{m.name || m.id}{m.stale ? <span style={{ ...styles.badge, marginLeft: 6 }}>{t("stale")}</span> : null}<MatchBadge info={state?.matchinfo?.[id]?.[m.id]} /><div style={styles.muted}>{m.id}</div></td>
-                      <td style={styles.td}>{m.contextWindow?.toLocaleString() ?? "—"}</td>
-                      <td style={styles.td}>{m.maxTokens?.toLocaleString() ?? "—"}</td>
-                      <td style={styles.td}>{(m.input ?? []).join(", ") || "—"}</td>
-                      <td style={styles.td}>{effortsLabel(m.reasoningEfforts)}</td>
-                      <td style={styles.td}>{String(m.compat?.thinkingFormat ?? "—")}</td>
-                      <td style={styles.td}><button style={styles.btn} onClick={() => setOverrideTarget({ route: id, model: m })}>{t("override")}</button></td>
-                    </tr>
-                  ))}
-                  {(p.models ?? []).length === 0 && (
-                    <tr><td style={styles.td} colSpan={7}>{t("noModels")}</td></tr>
-                  )}
-                </tbody>
-              </table>
+              <ModelTable
+                models={p.models ?? []}
+                matchinfo={state?.matchinfo?.[id]}
+                onOverride={(m) => setOverrideTarget({ route: id, model: m })}
+              />
             )}
           </div>
         );
@@ -306,62 +238,6 @@ function ProviderForm({ initial, protocols, onClose, onSubmit, busy }: {
         <div style={{ ...styles.row, justifyContent: "flex-end", marginTop: 12 }}>
           <button style={styles.btn} onClick={onClose}>{t("cancel")}</button>
           <button style={styles.btnPrimary} disabled={busy || !id || !baseURL} onClick={() => onSubmit({ id, displayName, baseURL, api: apiProto, apiKey: apiKey || undefined })}>{t("save")}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function OverrideForm({ route, model, onClose, onSubmit, busy }: {
-  route: string;
-  model: ModelView;
-  onClose: () => void;
-  onSubmit: (cap: Record<string, unknown>, clear: boolean) => void;
-  busy: boolean;
-}) {
-  const [contextWindow, setContextWindow] = useState(model.contextWindow ?? 0);
-  const [maxTokens, setMaxTokens] = useState(model.maxTokens ?? 0);
-  const [input, setInput] = useState((model.input ?? ["text"]).join(","));
-  const [efforts, setEfforts] = useState(model.reasoningEfforts ? JSON.stringify(model.reasoningEfforts) : "");
-  const [thinkingFormat, setThinkingFormat] = useState(String(model.compat?.thinkingFormat ?? ""));
-  return (
-    <div style={styles.overlay} onClick={onClose}>
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <div style={{ ...styles.h1, fontSize: 17, marginBottom: 4 }}>{t("override")}: {model.id}</div>
-        <div style={styles.muted}>{route}</div>
-        <div style={{ height: 12 }} />
-        <label style={styles.field}>
-          <span style={styles.label}>{t("contextWindow")}</span>
-          <input style={styles.input} type="number" value={contextWindow} onChange={(e) => setContextWindow(Number(e.target.value))} />
-        </label>
-        <label style={styles.field}>
-          <span style={styles.label}>{t("maxTokens")}</span>
-          <input style={styles.input} type="number" value={maxTokens} onChange={(e) => setMaxTokens(Number(e.target.value))} />
-        </label>
-        <label style={styles.field}>
-          <span style={styles.label}>{t("input")} (comma-separated)</span>
-          <input style={styles.input} value={input} onChange={(e) => setInput(e.target.value)} />
-        </label>
-        <label style={styles.field}>
-          <span style={styles.label}>{t("efforts")} (JSON, empty = keep)</span>
-          <input style={styles.input} value={efforts} onChange={(e) => setEfforts(e.target.value)} placeholder='{"off":null,"high":"high"}' />
-        </label>
-        <label style={styles.field}>
-          <span style={styles.label}>{t("thinkingFormat")}</span>
-          <input style={styles.input} value={thinkingFormat} onChange={(e) => setThinkingFormat(e.target.value)} placeholder="deepseek / zai / qwen / openai" />
-        </label>
-        <div style={{ ...styles.row, justifyContent: "flex-end", marginTop: 12 }}>
-          <button style={styles.btnDanger} disabled={busy} onClick={() => onSubmit({}, true)}>{t("clearOverride")}</button>
-          <button style={styles.btn} onClick={onClose}>{t("cancel")}</button>
-          <button style={styles.btnPrimary} disabled={busy} onClick={() => {
-            const cap: Record<string, unknown> = {};
-            if (contextWindow > 0) cap.contextWindow = contextWindow;
-            if (maxTokens > 0) cap.maxTokens = maxTokens;
-            if (input.trim()) cap.input = input.split(",").map((s) => s.trim()).filter(Boolean);
-            if (efforts.trim()) { try { cap.reasoningEfforts = JSON.parse(efforts); } catch { /* ignore */ } }
-            if (thinkingFormat.trim()) cap.compat = { ...(model.compat ?? {}), thinkingFormat: thinkingFormat.trim() };
-            onSubmit(cap, false);
-          }}>{t("save")}</button>
         </div>
       </div>
     </div>
