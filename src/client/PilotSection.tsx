@@ -105,6 +105,7 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
               <ModelTable
                 models={p.models ?? []}
                 matchinfo={state?.matchinfo?.[id]}
+                overridden={new Set(Object.keys(state?.overrides ?? {}).filter((k) => k.startsWith(id + "/")).map((k) => k.slice(id.length + 1)))}
                 onOverride={(m) => setOverrideTarget({ route: id, model: m })}
               />
             )}

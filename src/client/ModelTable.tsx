@@ -29,8 +29,10 @@ export function effortsLabel(e: ModelView["reasoningEfforts"]): string {
 
 function sourceBadge(info: MatchInfoView | undefined): { label: string; tone: "authoritative" | "guess" } | null {
   if (!info) return null;
-  if (info.sources.includes("pi-ai-catalog")) return { label: "pi-ai", tone: "authoritative" };
+  // Show the highest-priority source that contributed: models.dev overlays the
+  // pi-ai catalog, so when both matched the effective values come from it.
   if (info.sources.includes("models.dev")) return { label: "models.dev", tone: "authoritative" };
+  if (info.sources.includes("pi-ai-catalog")) return { label: "pi-ai", tone: "authoritative" };
   return { label: t("estimated"), tone: "guess" };
 }
 
@@ -42,12 +44,14 @@ export function MatchBadge({ info }: { info: MatchInfoView | undefined }) {
   return <span title={title} style={{ ...styles.badge, ...toneStyle, marginLeft: 6 }}>{b.label}</span>;
 }
 
-export function ModelTable({ models, matchinfo, onOverride, compact = false }: {
+export function ModelTable({ models, matchinfo, onOverride, compact = false, overridden }: {
   models: ModelView[];
   matchinfo: Record<string, MatchInfoView> | undefined;
   onOverride: (model: ModelView) => void;
   /** Narrow variant for the Models-page provider-card seat. */
   compact?: boolean;
+  /** Model ids carrying a user override; rendered with a marker. */
+  overridden?: Set<string>;
 }): React.ReactElement {
   const modelCell: React.CSSProperties = compact
     ? { ...styles.td, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
@@ -56,6 +60,7 @@ export function ModelTable({ models, matchinfo, onOverride, compact = false }: {
     ? { ...styles.td, width: 1, whiteSpace: "nowrap" }
     : styles.td;
   return (
+    <div style={{ overflowX: "auto", maxWidth: "100%" }}>
     <table style={styles.table}>
       <thead>
         <tr>
@@ -74,6 +79,7 @@ export function ModelTable({ models, matchinfo, onOverride, compact = false }: {
             <td style={modelCell}>
               {m.name || m.id}
               {m.stale ? <span style={{ ...styles.badge, ...styles.badgeWarn, marginLeft: 6 }}>{t("stale")}</span> : null}
+              {overridden?.has(m.id) ? <span style={{ ...styles.badge, ...styles.badgeSuccess, marginLeft: 6 }}>{t("overridden")}</span> : null}
               <MatchBadge info={matchinfo?.[m.id]} />
               <div style={styles.muted}>{m.id}</div>
             </td>
@@ -90,5 +96,6 @@ export function ModelTable({ models, matchinfo, onOverride, compact = false }: {
         )}
       </tbody>
     </table>
+    </div>
   );
 }

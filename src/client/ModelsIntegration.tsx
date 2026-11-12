@@ -85,7 +85,13 @@ export function ProviderCardPilot(props: ProviderCardOwnerProps): React.ReactEle
       </div>
       {toast && <div style={toast.err ? styles.toastErr : styles.toast}>{toast.msg}</div>}
       {expanded && (
-        <ModelTable models={p.models ?? []} matchinfo={matchinfo} onOverride={(m) => setOverrideTarget(m)} compact />
+        <ModelTable
+          models={p.models ?? []}
+          matchinfo={matchinfo}
+          overridden={new Set(Object.keys(state?.overrides ?? {}).filter((k) => k.startsWith(routeId + "/")).map((k) => k.slice(routeId.length + 1)))}
+          onOverride={(m) => setOverrideTarget(m)}
+          compact
+        />
       )}
       {overrideTarget && (
         <OverrideForm
