@@ -1,9 +1,14 @@
 /**
  * Self-debug: reproduce the plugin's real add-provider pipeline against the
- * LIVE adapter schema and a REAL gateway listing, then validate the exact
- * payload with the adapter's own Config. Run via scripts/run-selfdebug.mjs.
- * Not shipped (scripts/ is outside package files).
+ * LIVE adapter, then validate the exact payload with the adapter's OWN checks:
+ *   1. Config schema (new Config) — modalities / effort keys / compat-key union.
+ *   2. resolveRouteModels (extracted verbatim from the installed adapter, with
+ *      catalog lookups stubbed empty for custom gateway routes) — per-protocol
+ *      compat gating, reasoning-effort rules, positive-integer windows, etc.
+ *   3. resolveProfiles route-header checks (copied verbatim).
+ * Shows raw payload FAILING and sanitized payload PASSING. Not shipped.
  */
+import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { matchModel } from "../src/matcher.js";
 import { loadPiAiCatalog } from "../src/catalog.js";
@@ -16,24 +21,52 @@ import {
   stripUnknownCompat,
   sanitizeInput,
   sanitizeReasoningEfforts,
+  sanitizeCompatByProtocol,
 } from "../src/writer.js";
+import { loadCompatGates, resolveAdapterLibPath, offeredCompatFields } from "../src/adapter-gates.js";
 import type { ProviderRoute, StoredModel, ListingRow } from "../src/types.js";
 
-// Mimic the real DSH runtime so catalog resolution anchors on the launcher.
-process.argv[1] = "/opt/dsh/bin/dsh";
+process.argv[1] = "/opt/dsh/bin/dsh"; // anchor catalog + adapter resolution
 
-const ADAPTER_DIR = "/opt/dsh/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm-pi-ai";
-const adapterPath = `${ADAPTER_DIR}/lib/index.js`;
+const adapterPath = resolveAdapterLibPath();
+if (!adapterPath) { console.log("FAIL: cannot resolve adapter lib path"); process.exit(1); }
+const adapterSource = readFileSync(adapterPath, "utf8");
 const { Config } = (await import(adapterPath)) as { Config: new (raw: unknown) => unknown };
 const schema = (Config as unknown as { toJSON(): unknown }).toJSON();
 
+// --- Extract the adapter's REAL validation cluster and run it verbatim. ---
+const start = adapterSource.indexOf("const NO_COST");
+const end = adapterSource.indexOf("function createModels");
+if (start < 0 || end < 0) { console.log("FAIL: cannot locate validation cluster"); process.exit(1); }
+const cluster = adapterSource.slice(start, end);
+const real = new Function(
+  `${cluster}\n` +
+  // Custom gateway routes have no installed catalog: stub lookups empty.
+  `catalogModels = () => new Map();\n` +
+  `catalogProvider = () => undefined;\n` +
+  `catalogProviders = () => new Map();\n` +
+  `return { resolveRouteModels, COMPAT_GATES, THINKING_LEVELS, MODALITIES };`,
+)() as {
+  resolveRouteModels: (req: unknown, validation?: string) => { models: unknown[]; modelErrors: Map<string, string> };
+  COMPAT_GATES: Record<string, Record<string, string>>;
+  THINKING_LEVELS: string[];
+  MODALITIES: string[];
+};
+console.log("real validation cluster extracted:", {
+  protocols: Object.keys(real.COMPAT_GATES),
+  thinkingLevels: real.THINKING_LEVELS,
+  modalities: real.MODALITIES,
+});
+
+const gates = loadCompatGates();
 const allowedCompat = extractCompatKeys(schema);
 const allowedInput = extractInputModalities(schema);
 const allowedEfforts = extractReasoningEffortKeys(schema);
 console.log("schema gates:", {
-  compatKeys: allowedCompat ? allowedCompat.size : "n/a",
+  compatKeys: allowedCompat?.size ?? "n/a",
   input: allowedInput ? [...allowedInput] : "n/a",
   effortKeys: allowedEfforts ? [...allowedEfforts] : "n/a",
+  perProtocolGates: gates ? Object.keys(gates) : "UNAVAILABLE",
 });
 
 const catalog = await loadPiAiCatalog();
@@ -59,13 +92,12 @@ async function fetchListing(baseURL: string, apiKey?: string): Promise<ListingRo
   return (json.data ?? []).map((d) => ({ id: String(d.id), name: typeof d.name === "string" ? d.name : undefined }));
 }
 
-function buildModels(routeId: string, route: ProviderRoute, listing: ListingRow[]): StoredModel[] {
+function buildModels(route: ProviderRoute, listing: ListingRow[]): StoredModel[] {
   const protocol = routeProtocol(route.api, "");
-  const models: StoredModel[] = [];
-  for (const row of listing) {
+  return listing.map((row) => {
     const match = matchModel({ id: row.id, endpoint: row, catalog, modelsDev: (id) => modelsDev.lookup(id), routeProtocol: protocol });
     const cap = match.capability;
-    const model: StoredModel = {
+    return {
       id: row.id,
       name: match.name,
       contextWindow: cap.contextWindow ?? route.defaultContextWindow ?? 131072,
@@ -73,15 +105,18 @@ function buildModels(routeId: string, route: ProviderRoute, listing: ListingRow[
       input: cap.input ?? route.defaultInput ?? ["text"],
       ...(cap.reasoningEfforts !== undefined ? { reasoningEfforts: cap.reasoningEfforts } : {}),
       ...(cap.compat ? { compat: cap.compat } : {}),
-    };
-    models.push(model);
-  }
-  return models;
+    } as StoredModel;
+  });
 }
 
 function sanitize(providers: Record<string, ProviderRoute>): Record<string, ProviderRoute> {
   let payload = providers;
   if (allowedCompat) payload = stripUnknownCompat(payload, allowedCompat).providers;
+  if (gates) {
+    const r = sanitizeCompatByProtocol(payload, gates);
+    payload = r.providers;
+    if (r.stripped.length) console.log("  stripped compat (per-protocol):", r.stripped.join(", "));
+  }
   if (allowedInput) {
     const r = sanitizeInput(payload, allowedInput);
     payload = r.providers;
@@ -95,23 +130,37 @@ function sanitize(providers: Record<string, ProviderRoute>): Record<string, Prov
   return payload;
 }
 
-function validate(label: string, providers: Record<string, ProviderRoute>): boolean {
-  // resolveRouteModels invariants (adapter lib/index.js:657-693): non-empty
-  // models for non-catalog routes; each entry needs api + baseURL + positive
-  // integer contextWindow/maxTokens.
-  for (const [id, p] of Object.entries(providers)) {
-    if (!p.api || !p.baseURL) { console.log(`FAIL  ${label}: route ${id} missing api/baseURL`); return false; }
-    if (!Array.isArray(p.models) || p.models.length === 0) { console.log(`FAIL  ${label}: route ${id} resolves no models`); return false; }
-    for (const m of p.models) {
-      for (const f of ["contextWindow", "maxTokens"] as const) {
-        const v = m[f];
-        if (typeof v !== "number" || !Number.isInteger(v) || v <= 0) { console.log(`FAIL  ${label}: ${id}/${m.id} ${f}=${String(v)} not positive integer`); return false; }
-      }
-    }
-  }
+// resolveProfiles route-header checks (verbatim from adapter lib/index.js:1125-1143).
+function assertRouteHeader(provider: string, source: ProviderRoute): void {
+  const legacy = source as Record<string, unknown>;
+  if ("provider" in legacy) throw new Error(`provider "${provider}" sets "provider", which moved to the providers dict key`);
+  if ("maxRetries" in legacy || "maxRetryDelayMs" in legacy) throw new Error(`provider "${provider}" sets removed maxRetries/maxRetryDelayMs`);
+  if (provider.length === 0) throw new Error("provider names must be non-empty");
+  if (source.baseURL !== undefined && source.baseURL.length === 0) throw new Error(`provider "${provider}" has an empty baseURL`);
+  if (source.displayName !== undefined && source.displayName.length === 0) throw new Error(`provider "${provider}" has an empty displayName`);
+  for (const [name, value] of Object.entries((source as { headers?: Record<string, string> }).headers ?? {})) new Headers([[name, value]]);
+  const defaultInput = [...(source.defaultInput ?? ["text", "image"])];
+  if (defaultInput.length === 0) throw new Error(`provider "${provider}" defaultInput must name at least one modality`);
+}
+
+function fullValidate(label: string, providers: Record<string, ProviderRoute>): boolean {
   try {
-    new Config({ providers });
-    console.log(`PASS  ${label}: Config accepted ${Object.keys(providers).length} route(s), ${Object.values(providers).reduce((n, p) => n + (p.models?.length ?? 0), 0)} models`);
+    new Config({ providers }); // schema layer
+    for (const [id, route] of Object.entries(providers)) {
+      assertRouteHeader(id, route);
+      real.resolveRouteModels({
+        provider: id,
+        ...(route.api !== undefined ? { api: route.api } : {}),
+        ...(route.baseURL !== undefined ? { baseURL: route.baseURL } : {}),
+        ...(route.models !== undefined ? { models: route.models } : {}),
+        ...(route.compat !== undefined ? { compat: route.compat } : {}),
+        defaultInput: [...(route.defaultInput ?? ["text", "image"])],
+        defaultContextWindow: route.defaultContextWindow ?? 1e6,
+        defaultMaxTokens: route.defaultMaxTokens ?? 128e3,
+      }, "strict"); // serviceability layer (real adapter logic)
+    }
+    const n = Object.values(providers).reduce((acc, p) => acc + (p.models?.length ?? 0), 0);
+    console.log(`PASS  ${label}: Config + resolveRouteModels accepted ${Object.keys(providers).length} route(s), ${n} models`);
     return true;
   } catch (error) {
     console.log(`FAIL  ${label}:`, error instanceof Error ? error.message : String(error));
@@ -121,7 +170,6 @@ function validate(label: string, providers: Record<string, ProviderRoute>): bool
 
 const targets: Array<{ id: string; baseURL: string; keyName?: string }> = [
   { id: "axonhub", baseURL: "https://axon.20031014.xyz/v1", keyName: "completions" },
-  { id: "magpie", baseURL: "https://magpie.20031014.xyz/v1", keyName: "completions" },
 ];
 
 let allPass = true;
@@ -133,23 +181,53 @@ for (const t of targets) {
     listing = await fetchListing(t.baseURL, t.keyName ? readKey(t.keyName) : undefined);
   } catch (error) {
     console.log("  listing failed:", error instanceof Error ? error.message : String(error));
+    allPass = false;
     continue;
   }
   console.log("  listing:", listing.length, "models");
   const route: ProviderRoute = { displayName: t.id, api: "openai-completions", baseURL: t.baseURL, apiKeyEnv: "COMPLETIONS_API_KEY" };
-  route.models = buildModels(t.id, route, listing);
-  // Show a sample of raw reasoningEfforts maps that contain off-schema keys.
-  const badEfforts = route.models.filter((m) => m.reasoningEfforts && typeof m.reasoningEfforts === "object" && Object.keys(m.reasoningEfforts).some((k) => allowedEfforts && !allowedEfforts.has(k)));
-  console.log("  models with off-schema effort keys (pre-sanitize):", badEfforts.length, badEfforts.slice(0, 3).map((m) => `${m.id}:${Object.keys(m.reasoningEfforts as object).join("/")}`));
-  const badInput = route.models.filter((m) => (m.input ?? []).some((x) => allowedInput && !allowedInput.has(x)));
-  console.log("  models with off-schema input (pre-sanitize):", badInput.length, badInput.slice(0, 3).map((m) => `${m.id}:${(m.input ?? []).join("/")}`));
+  route.models = buildModels(route, listing);
+
+  // Diagnostic: which models carry compat fields the route protocol does NOT offer?
+  const offered = gates ? offeredCompatFields(gates, route.api ?? "openai-completions") : undefined;
+  const offCompat = route.models.filter((m) => m.compat && Object.keys(m.compat).some((k) => offered && !offered.has(k)));
+  console.log("  models with off-protocol compat (pre-sanitize):", offCompat.length);
+  for (const m of offCompat) {
+    const bad = Object.keys(m.compat ?? {}).filter((k) => offered && !offered.has(k));
+    console.log(`    ${m.id}: off=[${bad.join(",")}] full=${JSON.stringify(m.compat)}`);
+  }
+  const minimax = route.models.find((m) => m.id.includes("minimax"));
+  console.log("  minimax sample:", minimax ? `${minimax.id} compat=${JSON.stringify(minimax.compat)} efforts=${JSON.stringify(minimax.reasoningEfforts)}` : "none in listing");
+
+  console.log("  -- raw payload (pre-sanitize), expect FAIL reproducing the user error --");
+  fullValidate(`${t.id} RAW`, { [t.id]: route });
+
+  console.log("  -- sanitized payload, expect PASS --");
   const cleaned = sanitize({ [t.id]: route });
-  const ok = validate(t.id, cleaned);
+  const ok = fullValidate(`${t.id} CLEAN`, cleaned);
   allPass = allPass && ok;
   Object.assign(combined, cleaned);
 }
 
+console.log("\n=== synthetic reproduction of the forceAdaptiveThinking error ===");
+// A minimax catalog entry carries anthropic-only forceAdaptiveThinking; on an
+// openai-completions route the real adapter must reject it, and the per-protocol
+// gate must strip it so the write succeeds.
+const synthRoute: ProviderRoute = {
+  displayName: "synthetic", api: "openai-completions", baseURL: "https://x/v1", apiKeyEnv: "K",
+  models: [{
+    id: "minimax-m3.1-flash", name: "MiniMax-M3.1-Flash", contextWindow: 1000000, maxTokens: 512000,
+    input: ["text"], reasoningEfforts: { off: null, high: "high" },
+    compat: { forceAdaptiveThinking: true, thinkingFormat: "deepseek", supportsReasoningEffort: true },
+  } as StoredModel],
+};
+console.log("  -- raw (expect the exact user error) --");
+fullValidate("synthetic RAW", { synthetic: synthRoute });
+console.log("  -- sanitized (expect PASS) --");
+const synthClean = sanitize({ synthetic: synthRoute });
+allPass = fullValidate("synthetic CLEAN", synthClean) && allPass;
+
 console.log("\n=== combined write (all routes at once) ===");
-allPass = validate("combined", combined) && allPass;
-console.log(allPass ? "\nALL PASS" : "\nSOME FAILED");
+allPass = fullValidate("combined CLEAN", combined) && allPass;
+console.log(allPass ? "\nALL PASS (sanitized payload accepted by the real adapter)" : "\nSOME FAILED");
 process.exit(allPass ? 0 : 1);

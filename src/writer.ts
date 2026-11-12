@@ -16,6 +16,12 @@ import type {
   SettingsDescriptor,
   SettingsSeam,
 } from "./types.js";
+import {
+  allOfferedCompatFields,
+  loadCompatGates,
+  offeredCompatFields,
+  type CompatGates,
+} from "./adapter-gates.js";
 
 export const PI_AI_NS = "llm-pi-ai";
 
@@ -233,10 +239,15 @@ export function sanitizeInput(
 }
 
 /**
- * Filter every model.reasoningEfforts map to the level keys the live schema
- * accepts (dropping e.g. models.dev "none"), keeping only string|null values.
- * `false` (reasoning disabled) and absent maps are left untouched. Returns the
- * cleaned providers plus the distinct level keys that were stripped.
+ * Project every model.reasoningEfforts map into a form the adapter's
+ * resolveModelReasoning accepts:
+ *  - keys filtered to the level set the live schema allows (drops e.g. "none");
+ *  - "off" may map to a string or null; every OTHER level must map to a
+ *    non-empty string (null/"" are rejected for non-off levels);
+ *  - a map left empty, or with no level beyond "off", becomes `false`
+ *    (the adapter rejects empty/off-only maps and asks for false instead).
+ * `false` and absent maps are left untouched. Returns the cleaned providers
+ * plus the distinct level keys that were stripped (for logging).
  */
 export function sanitizeReasoningEfforts(
   providers: Record<string, ProviderRoute>,
@@ -249,14 +260,60 @@ export function sanitizeReasoningEfforts(
     if (Array.isArray(p.models)) {
       p.models = p.models.map((m) => {
         const re = m.reasoningEfforts;
-        if (!re || typeof re !== "object") return m; // false | undefined
+        if (re === false || re === undefined) return m; // disabled | inherited
+        if (re === null || typeof re !== "object") return { ...m, reasoningEfforts: false };
         const out: Record<string, string | null> = {};
         for (const [k, v] of Object.entries(re)) {
           if (!allowed.has(k)) { if (!stripped.includes(k)) stripped.push(k); continue; }
-          if (typeof v === "string" || v === null) out[k] = v;
+          if (k === "off") {
+            if (typeof v === "string" || v === null) out[k] = v;
+          } else if (typeof v === "string" && v.length > 0) {
+            out[k] = v;
+          }
         }
-        return { ...m, reasoningEfforts: out };
+        const hasBeyondOff = Object.keys(out).some((k) => k !== "off");
+        return { ...m, reasoningEfforts: hasBeyondOff ? out : false };
       });
+    }
+    next[route] = p;
+  }
+  return { providers: next, stripped };
+}
+
+/**
+ * Filter compat fields to what the route's protocol actually offers, using the
+ * installed adapter's per-protocol gates. The Config schema unions every
+ * protocol's fields, but resolveModelCompat rejects a model-level field the
+ * route protocol does not offer (e.g. anthropic-only `forceAdaptiveThinking`
+ * on an openai-completions route). Also drops null values and fields no
+ * protocol offers (assertOfferedCompatFields). Returns cleaned providers plus
+ * the distinct field keys stripped (for logging).
+ */
+export function sanitizeCompatByProtocol(
+  providers: Record<string, ProviderRoute>,
+  gates: CompatGates,
+): { providers: Record<string, ProviderRoute>; stripped: string[] } {
+  const stripped: string[] = [];
+  const allOffered = allOfferedCompatFields(gates);
+  const note = (key: string): void => { if (!stripped.includes(key)) stripped.push(key); };
+  const next: Record<string, ProviderRoute> = {};
+  for (const [route, profile] of Object.entries(providers)) {
+    const p: ProviderRoute = { ...profile };
+    const offered = p.api ? offeredCompatFields(gates, p.api) : allOffered;
+    const clean = (compat: unknown): ModelCompat => {
+      if (!compat || typeof compat !== "object") return compat as ModelCompat;
+      const out: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(compat as Record<string, unknown>)) {
+        if (value === null || value === undefined) { note(key); continue; }
+        if (!allOffered.has(key)) { note(key); continue; }
+        if (!offered.has(key)) { note(key); continue; }
+        out[key] = value;
+      }
+      return out as ModelCompat;
+    };
+    if (p.compat) p.compat = clean(p.compat) as ProviderRoute["compat"];
+    if (Array.isArray(p.models)) {
+      p.models = p.models.map((m) => (m.compat ? { ...m, compat: clean(m.compat) } : m));
     }
     next[route] = p;
   }
@@ -272,6 +329,8 @@ export interface WriterOptions {
   maxRetries?: number;
   /** Logger. */
   log?: (msg: string) => void;
+  /** Per-protocol compat gates (defaults to the installed adapter's gates). */
+  compatGates?: CompatGates;
 }
 
 export class Writer {
@@ -343,6 +402,15 @@ export class Writer {
       payload = result.providers;
       stripped = result.stripped;
       if (stripped.length > 0) this.log(`stripped unsupported compat keys: ${stripped.join(", ")}`);
+    }
+    const gates = this.opts.compatGates ?? loadCompatGates();
+    if (gates) {
+      const result = sanitizeCompatByProtocol(payload, gates);
+      payload = result.providers;
+      if (result.stripped.length > 0) {
+        this.log(`stripped compat fields not offered by the route protocol: ${result.stripped.join(", ")}`);
+        stripped = [...new Set([...stripped, ...result.stripped])];
+      }
     }
     const allowedInput = extractInputModalities(descriptor?.schema);
     if (allowedInput) {

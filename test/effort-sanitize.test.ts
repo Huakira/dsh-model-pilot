@@ -54,6 +54,9 @@ describe("reasoningEffort level gating", () => {
           { id: "b", reasoningEfforts: false },
           { id: "c" },
           { id: "d", reasoningEfforts: { none: "none" } },
+          { id: "e", reasoningEfforts: { off: null, high: null } },
+          { id: "f", reasoningEfforts: { off: null, high: "" } },
+          { id: "g", reasoningEfforts: { high: "high" } },
         ],
       },
     } as any, allowed);
@@ -62,7 +65,10 @@ describe("reasoningEffort level gating", () => {
     expect(gw.models[0].reasoningEfforts).toEqual({ off: null, minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" });
     expect(gw.models[1].reasoningEfforts).toBe(false); // untouched
     expect(gw.models[2].reasoningEfforts).toBeUndefined(); // untouched
-    expect(gw.models[3].reasoningEfforts).toEqual({}); // all keys dropped -> empty map (schema-valid)
+    expect(gw.models[3].reasoningEfforts).toBe(false); // only "none" -> no level beyond off -> false
+    expect(gw.models[4].reasoningEfforts).toBe(false); // high:null dropped -> only off -> false
+    expect(gw.models[5].reasoningEfforts).toBe(false); // high:"" dropped -> only off -> false
+    expect(gw.models[6].reasoningEfforts).toEqual({ high: "high" }); // valid non-off kept
   });
 
   it("Writer.writeProviders strips none before the settings write", async () => {
