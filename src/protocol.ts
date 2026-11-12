@@ -53,6 +53,8 @@ export type Family =
   | "glm"
   | "kimi"
   | "minimax"
+  | "muse"
+  | "longcat"
   | "mistral"
   | "llama"
   | "generic";
@@ -68,20 +70,34 @@ export function familyOf(id: string): Family {
   if (/(^|\/)glm|zai|chatglm/.test(s)) return "glm";
   if (/(^|\/)kimi|moonshot/.test(s)) return "kimi";
   if (/minimax|abab/.test(s)) return "minimax";
+  if (/(^|\/)muse[-.]/.test(s)) return "muse";
+  if (/longcat/.test(s)) return "longcat";
   if (/mistral|mixtral|magistral|devstral/.test(s)) return "mistral";
   if (/llama|meta\./.test(s)) return "llama";
   return "generic";
 }
 
-/** Suggest a wire protocol from the model family when the route has none. */
+/**
+ * Suggest a wire protocol from the model family.
+ *
+ * The mapping is the user's gateway convention (2026-11-12):
+ *   claude, minimax            → anthropic-messages
+ *   gpt, grok, muse, longcat   → openai-responses
+ *   everything else (glm, qwen, kimi, deepseek, …) → openai-completions
+ * Gemini keeps its native protocol name; adapters that do not implement it
+ * simply leave those models on the route's own protocol.
+ */
 export function suggestProtocol(id: string): Protocol {
   switch (familyOf(id)) {
     case "claude":
+    case "minimax":
       return "anthropic-messages";
     case "gemini":
       return "gemini";
     case "gpt":
     case "grok":
+    case "muse":
+    case "longcat":
       return "openai-responses";
     default:
       return "openai-completions";
@@ -108,6 +124,7 @@ export function thinkingFormatFor(id: string, protocol: Protocol): string | unde
   if (protocol === "anthropic-messages" || protocol === "gemini") return undefined;
   switch (familyOf(id)) {
     case "deepseek":
+    case "longcat":
       return "deepseek";
     case "glm":
       return "zai";

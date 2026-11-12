@@ -91,3 +91,23 @@ describe("shardBaseURL", () => {
     expect(shardBaseURL("anthropic-messages", "https://gw.example")).toBe("https://gw.example");
   });
 });
+
+describe("suggestProtocol mapping (user's gateway convention)", () => {
+  const cases: Array<[string, string]> = [
+    ["claude-opus-5-5", "anthropic-messages"],
+    ["minimax-m3.1-flash", "anthropic-messages"],
+    ["gpt-6.1-sol", "openai-responses"],
+    ["grok-4.6", "openai-responses"],
+    ["muse-spark-1.3-contributor", "openai-responses"],
+    ["LongCat-2.5", "openai-responses"],
+    ["glm-5.3-flash", "openai-completions"],
+    ["qwen-4-max-preview", "openai-completions"],
+    ["kimi-k3", "openai-completions"],
+    ["deepseek-v4.1-flash-1017", "openai-completions"],
+    ["step-5-preview", "openai-completions"],
+    ["dots-3-note-preview", "openai-completions"],
+  ];
+  it.each(cases)("%s → %s", (id, protocol) => {
+    expect(suggestProtocol(id)).toBe(protocol);
+  });
+});
