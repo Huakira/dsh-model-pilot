@@ -323,8 +323,25 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
       }
       try {
         const apiKey = route.apiKeyEnv && credentials ? (await credentials.resolve(route.apiKeyEnv))?.value : undefined;
+        // Mirror routes (hand-placed protocol shards) are NOT rebuilt from the
+        // listing: their models are there precisely because the listing's
+        // default protocol was wrong for them. Keep their stored entries.
+        if (/-(anthropic-messages|openai-completions|openai-responses|gemini)$/.test(routeId)) {
+          perRoute[routeId] = { ok: true, skipped: "mirror route (protocol shard); models are hand-placed" };
+          continue;
+        }
         const listing = await fetchListing(route, apiKey);
-        const { models, added, kept, matchinfo } = buildModels(routeId, route, listing, overrides);
+        let { models, added, kept, matchinfo } = buildModels(routeId, route, listing, overrides);
+        // Re-apply recorded protocol moves: a moved model must not reappear on
+        // the source route even though the listing still advertises it.
+        const meta = loadMeta();
+        const moves = (meta.moves ?? {}) as Record<string, { to: string; protocol: string }>;
+        const movedOut = Object.entries(moves).filter(([k]) => k.startsWith(routeId + "/")).map(([k]) => k.slice(routeId.length + 1));
+        if (movedOut.length > 0) {
+          const gone = new Set(movedOut);
+          models = models.filter((m) => !gone.has(m.id));
+          for (const id of movedOut) { delete (matchinfo as Record<string, unknown>)[`${routeId}/${id}`]; }
+        }
         matchinfoAll[routeId] = matchinfo;
         // Mirror routes (<route>-<protocol>) only carry hand-moved models that
         // the listing may never advertise; do not treat an empty listing as fatal.
@@ -398,6 +415,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         overrides: loadOverrides(),
         matchinfo: loadMatchInfo(),
         backups: writer.listBackups().map((b) => ({ id: b.id, createdAt: b.createdAt, reason: b.reason, routes: Object.keys(b.providers).length })),
+        moves: ((loadMeta().moves ?? {}) as Record<string, { to: string; protocol: string }>),
         meta: loadMeta(),
       });
     }),
@@ -505,6 +523,9 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
       // Protocol move: a model the route's protocol does not serve is MOVED to
       // a mirror route "<route>-<protocol>" sharing baseURL + key (pi-ai's
       // resolveEntry ignores a per-model api, so protocol is route-level).
+      // The move is recorded in meta.moves so the UI can keep showing the
+      // model on its ORIGINAL provider card (with a "→ protocol" chip) —
+      // the mirror stays an internal implementation detail, not a new provider.
       const moveTo = typeof body.moveToProtocol === "string" && body.moveToProtocol ? body.moveToProtocol : undefined;
       if (moveTo) {
         if (supportedProtocols && !supportedProtocols.includes(moveTo)) {
@@ -517,6 +538,32 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         const source = next[routeId];
         const model = source?.models?.find((m) => m.id === modelId);
         if (!source || !model) return json({ ok: false, error: `model "${modelId}" not found on route "${routeId}"` }, 400);
+
+        // Moving BACK: the source is a mirror and the target equals the parent
+        // route's protocol → merge into the parent, drop the mirror when empty.
+        const backMatch = /^(.*)-([a-z-]+)$/.exec(routeId);
+        const parentId = backMatch ? backMatch[1] : undefined;
+        const parent = parentId ? next[parentId] : undefined;
+        if (parentId && parent && parent.api === moveTo) {
+          parent.models = [...(parent.models ?? []).filter((m) => m.id !== modelId), { ...model, stale: undefined }];
+          next[parentId] = parent;
+          source.models = (source.models ?? []).filter((m) => m.id !== modelId);
+          if ((source.models ?? []).length === 0) delete next[routeId];
+          const mi = loadMatchInfo();
+          if (mi[routeId]?.[modelId]) {
+            mi[parentId] = { ...(mi[parentId] ?? {}), [modelId]: mi[routeId][modelId] };
+            delete mi[routeId][modelId];
+            saveMatchInfo(mi);
+          }
+          const meta = loadMeta();
+          const moves = (meta.moves ?? {}) as Record<string, { to: string; protocol: string }>;
+          delete moves[`${parentId}/${modelId}`];
+          meta.moves = moves;
+          saveMeta(meta);
+          await writer.writeProviders(next, `protocol move-back ${routeId}/${modelId} → ${parentId}`);
+          return json({ ok: true, moved: true, from: routeId, to: parentId, model: modelId, mirrorModels: source.models.length, sourceModels: parent.models.length });
+        }
+
         const mirrorId = `${routeId}-${moveTo}`;
         const mirror = next[mirrorId] ?? {
           displayName: `${source.displayName ?? routeId} · ${moveTo}`,
@@ -539,6 +586,13 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
           delete mi[routeId][modelId];
           saveMatchInfo(mi);
         }
+        // Record the move so the source card keeps listing the model with a
+        // "moved to <protocol>" chip and refresh keeps it out of the source.
+        const meta = loadMeta();
+        const moves = (meta.moves ?? {}) as Record<string, { to: string; protocol: string }>;
+        moves[`${routeId}/${modelId}`] = { to: mirrorId, protocol: moveTo };
+        meta.moves = moves;
+        saveMeta(meta);
         await writer.writeProviders(next, `protocol move ${routeId}/${modelId} → ${mirrorId}`);
         return json({ ok: true, moved: true, from: routeId, to: mirrorId, model: modelId, mirrorModels: mirror.models.length, sourceModels: source.models.length });
       }

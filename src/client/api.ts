@@ -35,6 +35,8 @@ export interface StateResponse {
   overrides: Record<string, Record<string, unknown>>;
   matchinfo: Record<string, Record<string, MatchInfoView>>;
   backups: { id: string; createdAt: number; reason: string; routes: number }[];
+  /** Recorded protocol moves: "<route>/<model>" → { to, protocol }. */
+  moves: Record<string, { to: string; protocol: string }>;
   meta: Record<string, unknown>;
 }
 

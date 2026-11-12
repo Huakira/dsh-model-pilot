@@ -86,11 +86,23 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
       {routeIds.map((id) => {
         const p = providers[id];
         const isOpen = expanded[id];
+        // Mirror routes (protocol shards "<parent>-<protocol>") render as an
+        // indented sub-card of their parent, not as an independent provider.
+        const shardMatch = /^(.+)-((?:anthropic-messages|openai-completions|openai-responses|gemini))$/.exec(id);
+        const parentId = shardMatch?.[1];
+        if (parentId && providers[parentId]) return null; // drawn under the parent
+        const shards = shardMatch ? [] : routeIds.filter((r) => r.startsWith(id + "-") && /^(?:anthropic-messages|openai-completions|openai-responses|gemini)$/.test(r.slice(id.length + 1)));
+        const moves = state?.moves ?? {};
+        const movedOut: Record<string, { to: string; protocol: string }> = {};
+        for (const [k, v] of Object.entries(moves)) {
+          if (k.startsWith(id + "/")) movedOut[k.slice(id.length + 1)] = v;
+        }
         return (
-          <div key={id} style={styles.card}>
+          <div key={id} style={{ ...styles.card, marginLeft: parentId ? 18 : 0 }}>
             <div style={styles.spread}>
               <div>
                 <strong>{p.displayName || id}</strong> <span style={styles.muted}>({id})</span>
+                {shards.length > 0 && <span style={{ ...styles.badge, ...styles.badgeWarn, marginLeft: 6 }}>{t("shard")} ×{shards.length}</span>}
                 <div style={styles.muted}>{p.baseURL} · {p.api} · {p.keyConfigured ? t("keyConfigured") : t("keyMissing")} · {p.modelCount} {t("models")}</div>
               </div>
               <div style={styles.row}>
@@ -115,8 +127,44 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
                 }, t("ok")) : undefined}
                 protocols={state?.supportedProtocols ?? PROTOCOLS}
                 routeProtocol={p.api}
+                movedOut={movedOut}
               />
             )}
+
+            {isOpen && shards.map((sid) => {
+              const sp = providers[sid];
+              const sMoves = state?.moves ?? {};
+              const sMovedOut: Record<string, { to: string; protocol: string }> = {};
+              for (const [k, v] of Object.entries(sMoves)) {
+                if (k.startsWith(sid + "/")) sMovedOut[k.slice(sid.length + 1)] = v;
+              }
+              return (
+                <div key={sid} style={{ ...styles.card, margin: "6px 0 0 18px", padding: "10px 12px" }}>
+                  <div style={styles.spread}>
+                    <div style={styles.muted}>{t("shard")}: {sp.api} · {sp.modelCount} {t("models")}</div>
+                    <div style={styles.row}>
+                      <button style={styles.btn} disabled={busy} onClick={() => run(() => api.refresh([sid]), t("ok"))}>{t("refresh")}</button>
+                      <button style={styles.btn} onClick={() => setExpanded((e) => ({ ...e, [sid]: !e[sid] }))}>{expanded[sid] ? "▾" : "▸"} {t("models")}</button>
+                    </div>
+                  </div>
+                  {expanded[sid] && (
+                    <ModelTable
+                      models={sp.models ?? []}
+                      matchinfo={state?.matchinfo?.[sid]}
+                      overridden={new Set(Object.keys(state?.overrides ?? {}).filter((k) => k.startsWith(sid + "/")).map((k) => k.slice(sid.length + 1)))}
+                      onOverride={(m) => setOverrideTarget({ route: sid, model: m })}
+                      onMove={state?.supportedProtocols?.length ? (m, protocol) => run(async () => {
+                        const r = await api.override(sid, m.id, {}, false, protocol);
+                        return t("movedMsg").replace("{model}", m.id).replace("{to}", r.to ?? "").replace("{count}", String(r.mirrorModels ?? 0));
+                      }, t("ok")) : undefined}
+                      protocols={state?.supportedProtocols ?? PROTOCOLS}
+                      routeProtocol={sp.api}
+                      movedOut={sMovedOut}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         );
       })}

@@ -44,7 +44,7 @@ export function MatchBadge({ info }: { info: MatchInfoView | undefined }) {
   return <span title={title} style={{ ...styles.badge, ...toneStyle, marginLeft: 6 }}>{b.label}</span>;
 }
 
-export function ModelTable({ models, matchinfo, onOverride, onMove, protocols, routeProtocol: routeProto, compact = false, overridden }: {
+export function ModelTable({ models, matchinfo, onOverride, onMove, protocols, routeProtocol: routeProto, compact = false, overridden, movedOut }: {
   models: ModelView[];
   matchinfo: Record<string, MatchInfoView> | undefined;
   onOverride: (model: ModelView) => void;
@@ -58,6 +58,8 @@ export function ModelTable({ models, matchinfo, onOverride, onMove, protocols, r
   compact?: boolean;
   /** Model ids carrying a user override; rendered with a marker. */
   overridden?: Set<string>;
+  /** Recorded protocol moves: modelId → { to, protocol }; rows shown on the source card. */
+  movedOut?: Record<string, { to: string; protocol: string }>;
 }): React.ReactElement {
   const modelCell: React.CSSProperties = compact
     ? { ...styles.td, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
@@ -112,9 +114,21 @@ export function ModelTable({ models, matchinfo, onOverride, onMove, protocols, r
             </td>
           </tr>
         ))}
-        {(models ?? []).length === 0 && (
+        {(models ?? []).length === 0 && (movedOut ?? {}) && Object.keys(movedOut ?? {}).length === 0 && (
           <tr><td style={styles.td} colSpan={8}>{t("noModels")}</td></tr>
         )}
+        {Object.entries(movedOut ?? {}).map(([id, mv]) => (
+          <tr key={`moved-${id}`} style={{ opacity: 0.75 }}>
+            <td style={modelCell}>
+              {id}
+              <span style={{ ...styles.badge, ...styles.badgeSuccess, marginLeft: 6 }} title={t("movedHint")}>{t("movedBadge").replace("{protocol}", mv.protocol)}</span>
+              <div style={styles.muted}>{mv.to}</div>
+            </td>
+            <td style={styles.td}>{mv.protocol}</td>
+            <td style={styles.td} colSpan={5}>{t("servedByMirror")}</td>
+            <td style={actionCell}></td>
+          </tr>
+        ))}
       </tbody>
     </table>
     </div>

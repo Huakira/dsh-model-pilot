@@ -60,6 +60,10 @@ const en: Record<string, string> = {
   moveTo: "Move to protocol…",
   moveHint: "This model's endpoint speaks a different protocol? Move it to a mirror route sharing the same baseURL + key.",
   movedMsg: "Moved {model} → {to} ({count} models there)",
+  movedBadge: "→ {protocol}",
+  movedHint: "Smart protocol match: this model speaks a different wire protocol than the provider's; it is served by the protocol shard and shown here for continuity.",
+  servedByMirror: "Served by the protocol shard (same baseURL + key).",
+  shard: "Protocol shard",
   mirroredBadge: "mirror",
 };
 
@@ -124,6 +128,10 @@ const zh: Record<string, string> = {
   moveTo: "移动到协议…",
   moveHint: "这个模型端点说的是别的协议？把它移到共享同一 baseURL + 密钥的镜像路由。",
   movedMsg: "已移动 {model} → {to}（该路由现有 {count} 个模型）",
+  movedBadge: "→ {protocol}",
+  movedHint: "智能协议匹配：这个模型的线路协议与提供商不同，由协议分流路由服务，此处保留显示以便追踪。",
+  servedByMirror: "由协议分流路由服务（同 baseURL + 密钥）。",
+  shard: "协议分流",
   mirroredBadge: "镜像",
 };
 
