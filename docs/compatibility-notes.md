@@ -123,6 +123,9 @@ docs/             本文
 
 ## 9.  版本变更记录
 
+- **0.1.10**（2026-11-11）compact 卡片显示总上下文 + K/M 数字格式化：
+  - compact 变体恢复 contextWindow 列（用户要看到总上下文）。
+  - 新增 `formatTokens`：131072→"128K"、1048576→"1M"、1000000→"1M"（≥10 取整，<10 保留 1 位小数），替代 `toLocaleString()` 纯数字。
 - **0.1.9**（2026-11-11）Models 页卡片紧凑表格 + 打开设置提示：
   - **compact 变体**：`ModelTable` 加 `compact` prop（模型列 maxWidth:220 ellipsis、操作列 width:1 nowrap、隐藏 contextWindow 列），给 Models 页 provider-card 窄卡片用，修「覆盖按钮溢出」。
   - **打开设置提示**：provider-card 加「Settings → Model Pilot」提示（owner props 无打开设置回调，DSH 0.2.2-rc.1 未暴露该接缝，故降级为提示文案；若未来 owner 传 `openSettings` 则自动变跳转链接）。
