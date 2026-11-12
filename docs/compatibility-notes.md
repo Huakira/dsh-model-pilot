@@ -169,3 +169,20 @@ docs/             本文
 - **0.1.2**：host applied 日志改异步（等 sourcesReady settle），避免快照 catalog:false 误导。
 - **0.1.1**：修 pi-ai 目录解析（全局安装 node 在 /usr/bin，ESM-only 包 exports 无 require 条件）；改用 process.argv[1] 锚定安装前缀 + 文件系统直探。
 - **0.1.0**：首版。
+## 0.1.16 — 协议分流（mirror routes）+ 弹窗层级修复（2026-11-12）
+
+### 每模型协议覆盖为什么不是字段而是「移动」
+- 实测（`/tmp/test8.mjs`，真实适配器 `resolveProfiles` 集群）：`PiAiModelProfile` 没有 `api` 字段，`resolveEntry` 里 `const api = request.api ?? base?.api ?? routeApi` **只读 route/目录，静默忽略 models[] 条目上的 `api`**。协议在 pi-ai 是 route 级别（一个 route 一个 `createProvider` 单协议实现）。
+- 因此「把协议不对的模型改过来」的正确动作 = **移到镜像路由**：`<route>-<protocol>`，同 baseURL + 同 apiKeyEnv，`models[]` 手工搬过去。已用真实适配器验证 PASS（`/tmp/pilot-test-api.mjs`）。
+- 端点：`POST /api/dsh-model-pilot/override` 新增 `{ moveToProtocol }`，返回 `{ moved:true, from, to, mirrorModels, sourceModels }`；不支持的协议返回 400（同 upsert 校验）。
+- refreshRoutes 守护：镜像路由 id 匹配 `/-anthropic-messages$|-openai-completions$|-openai-responses$|-gemini$/`，listing 为空不算 fatal（镜像里的模型上游 listing 未必再列）。
+- 注意：refresh 主路由时 deleteSync 默认会把「移走的模型」从主路由删掉（上游还列着它，所以不会）；镜像路由不会自动获得新模型——新模型先落在主路由，协议不对再手动移。
+- UI：ModelTable 新增「协议」列 + 每行「移动到协议…」下拉（排除本路由协议；supportedProtocols<2 时不显示）；移动后 toast 显示 movedMsg。
+
+### 叉号点不动的根因与修复
+- 官方设置面板 overlay `.VOzbGW_overlay` z-index:1000；插件弹窗蒙层同为 zIndex:1000 且**后挂载** → 蒙层盖住面板包括右上角叉号，点击全被拦截。
+- 修复：新增 `src/client/Modal.tsx`——`createPortal(document.body)` + `zIndex:2000` + Esc capture；OverrideForm / ProviderForm 全部改走 Modal。
+- 教训与 ui-debugging 的 portal 规则一致：backdrop-filter + overflow:hidden 的祖先里内联 fixed 面板必翻车。
+
+### 版本流水
+- 0.1.15 → 0.1.16（commits `2eeed43` 功能 + `ce12792` version bump，已推 GitHub）。56 测试全过，typecheck 干净。live 日志 seams 全 true。
