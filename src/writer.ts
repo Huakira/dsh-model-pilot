@@ -64,6 +64,7 @@ interface SchemaNode {
   type?: string;
   dict?: Record<string, number>;
   inner?: number;
+  sKey?: number;
   list?: number[];
   value?: unknown;
 }
@@ -123,6 +124,38 @@ export function extractInputModalities(schema: unknown): Set<string> | undefined
     }
   }
   return found && modalities.size > 0 ? modalities : undefined;
+}
+
+/**
+ * Read the reasoning-effort level keys the installed adapter accepts, from the
+ * `reasoningEfforts` field of any model-profile object: union(false, dict) whose
+ * dict `sKey` is a union of consts (0.2.2-rc.1: off/minimal/low/medium/high/
+ * xhigh/max). Capability sources can emit extra levels (e.g. models.dev "none")
+ * that the strict write rejects, so the map must be filtered to these keys.
+ * Returns undefined when the schema cannot be introspected.
+ */
+export function extractReasoningEffortKeys(schema: unknown): Set<string> | undefined {
+  const root = schema as { uid?: number; refs?: Record<string, SchemaNode> } | undefined;
+  if (!root?.refs || root.uid === undefined) return undefined;
+  const refs = root.refs;
+  const keys = new Set<string>();
+  let found = false;
+  const collectConsts = (nodeId: number): void => {
+    const node = refs[String(nodeId)];
+    if (!node) return;
+    if (node.type === "const" && typeof node.value === "string") keys.add(node.value);
+    else if (node.type === "union" && Array.isArray(node.list)) for (const id of node.list) collectConsts(id);
+  };
+  const fromDict = (nodeId: number): void => {
+    const node = refs[String(nodeId)];
+    if (!node) return;
+    if (node.type === "dict" && node.sKey !== undefined) { found = true; collectConsts(node.sKey); }
+    else if (node.type === "union" && Array.isArray(node.list)) for (const id of node.list) fromDict(id);
+  };
+  for (const node of Object.values(refs)) {
+    if (node?.type === "object" && node.dict && "reasoningEfforts" in node.dict) fromDict(node.dict.reasoningEfforts);
+  }
+  return found && keys.size > 0 ? keys : undefined;
 }
 
 /** Deep-clone providers, dropping compat keys the live schema does not accept. */
@@ -192,6 +225,37 @@ export function sanitizeInput(
       p.models = p.models.map((m) => {
         const inp = cleanList(m.input);
         return inp !== undefined ? { ...m, input: inp } : m;
+      });
+    }
+    next[route] = p;
+  }
+  return { providers: next, stripped };
+}
+
+/**
+ * Filter every model.reasoningEfforts map to the level keys the live schema
+ * accepts (dropping e.g. models.dev "none"), keeping only string|null values.
+ * `false` (reasoning disabled) and absent maps are left untouched. Returns the
+ * cleaned providers plus the distinct level keys that were stripped.
+ */
+export function sanitizeReasoningEfforts(
+  providers: Record<string, ProviderRoute>,
+  allowed: Set<string>,
+): { providers: Record<string, ProviderRoute>; stripped: string[] } {
+  const stripped: string[] = [];
+  const next: Record<string, ProviderRoute> = {};
+  for (const [route, profile] of Object.entries(providers)) {
+    const p: ProviderRoute = { ...profile };
+    if (Array.isArray(p.models)) {
+      p.models = p.models.map((m) => {
+        const re = m.reasoningEfforts;
+        if (!re || typeof re !== "object") return m; // false | undefined
+        const out: Record<string, string | null> = {};
+        for (const [k, v] of Object.entries(re)) {
+          if (!allowed.has(k)) { if (!stripped.includes(k)) stripped.push(k); continue; }
+          if (typeof v === "string" || v === null) out[k] = v;
+        }
+        return { ...m, reasoningEfforts: out };
       });
     }
     next[route] = p;
@@ -286,6 +350,14 @@ export class Writer {
       payload = result.providers;
       if (result.stripped.length > 0) {
         this.log(`stripped unsupported input modalities: ${result.stripped.join(", ")} (adapter accepts: ${[...allowedInput].join(", ")})`);
+      }
+    }
+    const allowedEfforts = extractReasoningEffortKeys(descriptor?.schema);
+    if (allowedEfforts) {
+      const result = sanitizeReasoningEfforts(payload, allowedEfforts);
+      payload = result.providers;
+      if (result.stripped.length > 0) {
+        this.log(`stripped unsupported reasoningEffort levels: ${result.stripped.join(", ")} (adapter accepts: ${[...allowedEfforts].join(", ")})`);
       }
     }
 

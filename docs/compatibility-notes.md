@@ -123,6 +123,11 @@ docs/             本文
 
 ## 9. 版本变更记录
 
+- **0.1.5**（2026-11-11）修「reasoningEfforts 档位键被 schema 拒绝」，并建立真实数据自调试：
+  - **根因**：pi-ai 的 `reasoningEfforts: union(false, dict)`，dict 的 `sKey` 是枚举 union（`off/minimal/low/medium/high/xhigh/max`，适配器 `lib/index.js` model 对象 node146→reasoningEfforts node142→dict node128{sKey:113,inner:112}），`inner` 为 `union(string, null)`。pi-ai 目录的 `thinkingLevelMap` 经 `effortsFromLevelMap` 会原样产出含 `none` 的映射（如 kimi-k2.8-preview `{off:null,none:"none",…}`），多余键 `none` 被严格校验拒绝：`$.providers.<route>.models[N].reasoningEfforts expected false | { [key: "off"|…|"max"]: … } but got {…"none":…}`。值 string/null 本身合法，问题只在键。
+  - **修复**：writer 新增 `extractReasoningEffortKeys(schema)`（object.reasoningEfforts→union→dict.sKey→union consts 动态读允许档位，随 DSH 版本自适应）+ `sanitizeReasoningEfforts(providers,allowed)`，在 `writeProviders` 过滤每个 `model.reasoningEfforts` 的键到允许集合、值限 string|null；`false`/缺省不动，全被剥则留空 map（schema 合法）。与 input/compat 门控并列，覆盖所有写入路径。剥离写日志 `stripped unsupported reasoningEffort levels: …`。
+  - **自调试方法**（`scripts/selfdebug.ts` + `run-selfdebug.mjs`，不随包发布）：用真实适配器 `Config.toJSON()` 提取门控、真实 pi-ai 目录（1643 模型）、真实网关 listing（axonhub 18 模型），跑插件实际 `matchModel`+净化，再以真实 `Config` 校验整段 payload，并断言 `resolveRouteModels` 不变量（非空 models、api/baseURL 齐全、contextWindow/maxTokens 正整数）。在用户实际数据上精确复现 kimi-k2.8-preview/glm-5.3-flash:fast 的越界字段，净化后 **ALL PASS**。
+  - 回归测试 +5（合成 schema 提取 / 未来加档位自适应 / 不可 introspect 回退 / 净化保留 false 与空 map / Writer 端到端），共 45 通过。
 - **0.1.4**（2026-11-11）修「input 模态被 schema 拒绝」：
   - **根因**：pi-ai 的 `input: z.array(z.union(MODALITIES))`，`MODALITIES = Object.keys({text:true,image:true})`（适配器 `lib/index.js:282/1040`），**只接受 text/image**。能力次源 models.dev 会带 `video`/`audio`/`pdf`，匹配器原样写入 → 严格校验报 `$.providers.<route>.models[N].input[K] expected "text" | "image" but got "video"`。
   - **修复**：writer 新增 `extractInputModalities(schema)`（从 model 对象 `input` 字段按 array→union→const 动态读允许模态，随 DSH 版本自适应）+ `sanitizeInput(providers,allowed)`，在 `writeProviders` 统一 choke point 过滤每个 `model.input` 与 `route.defaultInput`，剥掉不支持的模态；过滤后为空则回退 `text`。覆盖添加/刷新/覆盖/回滚所有写入路径。剥离时写日志 `stripped unsupported input modalities: …`。
