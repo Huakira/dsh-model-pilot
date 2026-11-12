@@ -49,6 +49,8 @@ const en: Record<string, string> = {
   reachable: "reachable",
   unreachable: "unreachable",
   addedMsg: "Saved · protocol {protocol} · {count} models",
+  estimated: "est.",
+  matchedBase: "matched via {base}",
 };
 
 const zh: Record<string, string> = {
@@ -101,6 +103,8 @@ const zh: Record<string, string> = {
   reachable: "可达",
   unreachable: "不可达",
   addedMsg: "已保存 · 协议 {protocol} · {count} 个模型",
+  estimated: "估算",
+  matchedBase: "经 {base} 匹配",
 };
 
 function pick(): Record<string, string> {

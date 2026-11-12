@@ -4,10 +4,27 @@
  * settings panel through the `settings.section` slot (no DOM injection).
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { api, type StateResponse, type ProviderView, type ModelView } from "./api.js";
+import { api, type StateResponse, type ProviderView, type ModelView, type MatchInfoView } from "./api.js";
 import { t } from "./i18n.js";
 
 const PROTOCOLS = ["openai-completions", "openai-responses", "anthropic-messages", "gemini"];
+
+/** Short, human label for a capability source (shown as a model badge). */
+function sourceBadge(info: MatchInfoView | undefined): { label: string; tone: "authoritative" | "partial" | "guess" } | null {
+  if (!info) return null;
+  const best = info.sources.includes("pi-ai-catalog") ? "authoritative" : info.sources.includes("models.dev") ? "authoritative" : "guess";
+  if (best === "authoritative") return { label: info.sources.includes("pi-ai-catalog") ? "pi-ai" : "models.dev", tone: "authoritative" };
+  return { label: t("estimated"), tone: "guess" };
+}
+
+function MatchBadge({ info }: { info: MatchInfoView | undefined }) {
+  const b = sourceBadge(info);
+  if (!b) return null;
+  const bg = b.tone === "authoritative" ? "#e6f0e6" : "#fdf3e3";
+  const fg = b.tone === "authoritative" ? "#2c6e2c" : "#a86a00";
+  const title = info?.baseIdUsed ? `${info.sources.join(", ")} → ${info.baseIdUsed}` : (info?.sources.join(", ") ?? "");
+  return <span title={title} style={{ ...styles.badge, marginLeft: 6, background: bg, color: fg }}>{b.label}</span>;
+}
 
 const styles: Record<string, React.CSSProperties> = {
   page: { maxWidth: 960, color: "var(--dsw-alias-label-primary, #1a1a1a)", fontFamily: "inherit", padding: "4px 2px 40px" },
@@ -144,7 +161,7 @@ export function PilotSection(_props: { close?: () => void }): React.ReactElement
                 <tbody>
                   {(p.models ?? []).map((m) => (
                     <tr key={m.id}>
-                      <td style={styles.td}>{m.name || m.id}{m.stale ? <span style={{ ...styles.badge, marginLeft: 6 }}>{t("stale")}</span> : null}<div style={styles.muted}>{m.id}</div></td>
+                      <td style={styles.td}>{m.name || m.id}{m.stale ? <span style={{ ...styles.badge, marginLeft: 6 }}>{t("stale")}</span> : null}<MatchBadge info={state?.matchinfo?.[id]?.[m.id]} /><div style={styles.muted}>{m.id}</div></td>
                       <td style={styles.td}>{m.contextWindow?.toLocaleString() ?? "—"}</td>
                       <td style={styles.td}>{m.maxTokens?.toLocaleString() ?? "—"}</td>
                       <td style={styles.td}>{(m.input ?? []).join(", ") || "—"}</td>

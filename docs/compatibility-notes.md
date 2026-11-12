@@ -123,6 +123,9 @@ docs/             本文
 
 ## 9. 版本变更记录
 
+- **0.1.7**（2026-11-11）改进 id 匹配可靠性 + 模型来源透明化：
+  - **base-id 回退匹配**：新增 `baseModelId()`（剥 `vendor/` 前缀、`:tag` 路由标签、保守变体后缀 `-uncensored/-latest/-free/-fast/-slow`，**不剥 `-preview`** 以免误并）。catalog 索引新增 `byBase` 表；`matchModel` 在精确 id 未命中时回退查 base id。实测救回：`longcat-2.5`（剥 `meituan/`）、`dots-3-note-preview`（剥 `:free`）、`glm-5.3-flash:fast`（剥 `:fast`）、`glm-5.3-flash-uncensored`（剥 `-uncensored`），全部命中官方目录（ctx 1M 级）。`qwen-4-max-preview` 是真模型但 pi-ai 目录与 models.dev 均未收录 qwen-4（最新只到 qwen3.8-max），只能手动覆盖。
+  - **来源显示**：matchinfo 持久化到 `matchinfo.json`，UI 每模型显示来源徽标（pi-ai / models.dev / 估算），baseIdUsed 命中时 title 提示经哪个 base id 匹配。
 - **0.1.6**（2026-11-11）修「按协议 compat 门控」+ reasoningEfforts 服务性规则，并把自调试升级为适配器真实全量校验：
   - **根因**：适配器写入校验分两层——① Config schema（input 模态/effort 键/compat 键并集）；② `resolveRouteModels`→`resolveModelCompat`（适配器 `lib/index.js:638`）按**路由协议**门控 compat：字段须 `COMPAT_GATES[api][field]==="offer"`，`withhold` 或他协议专属字段一律拒。0.1.5 只做了 schema 层（compat 取全协议并集 26 键），漏了按协议层。pi-ai 目录条目经 `capabilityFromEntry`（src/catalog.ts:108）会带出 anthropic 专属 `forceAdaptiveThinking`，匹配到 openai-completions 路由即被拒：`provider "axonhub" model "minimax-m3.1-flash" sets compat "forceAdaptiveThinking", but its api is "openai-completions", which does not take it…`。
   - **修复**：新增 `src/adapter-gates.ts`——从**已安装适配器源码**提取 `COMPAT_GATES`（纯数据字面量，平衡括号提取 + 隔离求值，版本一致；含 7 协议），`loadCompatGates()` 缓存、`offeredCompatFields(gates,api)`/`allOfferedCompatFields(gates)`。writer 新增 `sanitizeCompatByProtocol(providers,gates)`：按 route.api 过滤 model.compat 与 route.compat，仅留本协议 offer 键，剥 null 值与无协议 offer 键；`writeProviders` 在 schema compat strip 后接入（`WriterOptions.compatGates` 可注入测试）。提取失败回退 schema 并集（旧行为）。

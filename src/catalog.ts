@@ -9,7 +9,7 @@
 import { createRequire } from "node:module";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { normalizeId, stripRoutingPrefix } from "./protocol.js";
+import { normalizeId, stripRoutingPrefix, baseModelId } from "./protocol.js";
 import type { Modality, ModelCapability, ReasoningEfforts } from "./types.js";
 
 /** One catalog entry, structural subset of pi-ai's Model shape. */
@@ -31,6 +31,8 @@ export interface CatalogEntry {
 export interface CatalogIndex {
   /** normalized id -> entries across providers, in catalog order. */
   byId: Map<string, CatalogEntry[]>;
+  /** base model id -> entries, for gateway-renamed ids (meituan/x, x:fast, x-uncensored). */
+  byBase: Map<string, CatalogEntry[]>;
   providers: string[];
   modelCount: number;
   generatedAt?: number;
@@ -46,8 +48,14 @@ export interface CatalogLoader {
 /** Build a cross-provider id index from a loader. */
 export function buildCatalogIndex(loader: CatalogLoader): CatalogIndex {
   const byId = new Map<string, CatalogEntry[]>();
+  const byBase = new Map<string, CatalogEntry[]>();
   const providers = loader.providers();
   let modelCount = 0;
+  const push = (map: Map<string, CatalogEntry[]>, key: string, entry: CatalogEntry): void => {
+    const list = map.get(key);
+    if (list) list.push(entry);
+    else map.set(key, [entry]);
+  };
   for (const provider of providers) {
     let models: CatalogEntry[] = [];
     try {
@@ -59,21 +67,27 @@ export function buildCatalogIndex(loader: CatalogLoader): CatalogIndex {
       if (!model || typeof model.id !== "string" || model.type === "image" || model.type === "classifier") continue;
       modelCount++;
       const entry: CatalogEntry = { ...model, provider: model.provider ?? provider };
-      // Index by both the full id and the routing-prefix-stripped id so a
+      // Index by the full id and the routing-prefix-stripped id so a
       // gateway alias (auto/…) still lands on the canonical catalog entry.
       for (const key of new Set([normalizeId(entry.id), stripRoutingPrefix(entry.id)])) {
-        const list = byId.get(key);
-        if (list) list.push(entry);
-        else byId.set(key, [entry]);
+        push(byId, key, entry);
       }
+      // Index by the base model id so gateway renames (meituan/x, x:fast,
+      // x-uncensored) resolve to the canonical entry as a fallback.
+      push(byBase, baseModelId(entry.id), entry);
     }
   }
-  return { byId, providers, modelCount, generatedAt: loader.generatedAt?.() };
+  return { byId, byBase, providers, modelCount, generatedAt: loader.generatedAt?.() };
 }
 
-/** Look up entries for a model id (exact normalized, then prefix-stripped). */
+/** Look up entries for a model id: exact normalized, then prefix-stripped, then
+ * the base model id (gateway renames). The base-id fallback only fires when the
+ * precise ids miss, so a canonical id never gets shadowed by a base match. */
 export function lookupCatalog(index: CatalogIndex, id: string): CatalogEntry[] {
-  return index.byId.get(normalizeId(id)) ?? index.byId.get(stripRoutingPrefix(id)) ?? [];
+  return index.byId.get(normalizeId(id))
+    ?? index.byId.get(stripRoutingPrefix(id))
+    ?? index.byBase.get(baseModelId(id))
+    ?? [];
 }
 
 /**

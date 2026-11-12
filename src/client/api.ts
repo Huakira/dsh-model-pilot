@@ -33,8 +33,15 @@ export interface StateResponse {
   revision: number;
   providers: Record<string, ProviderView>;
   overrides: Record<string, Record<string, unknown>>;
+  matchinfo: Record<string, Record<string, MatchInfoView>>;
   backups: { id: string; createdAt: number; reason: string; routes: number }[];
   meta: Record<string, unknown>;
+}
+
+export interface MatchInfoView {
+  sources: string[];
+  confidence: number;
+  baseIdUsed?: string;
 }
 
 export interface ProviderView {

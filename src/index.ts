@@ -25,6 +25,8 @@ import {
   type ProviderRoute,
   type StoredModel,
   type ModelCapability,
+  type MatchInfo,
+  type MatchInfoMap,
   type CredentialsSeam,
   type LlmSeam,
   type SettingsSeam,
@@ -131,6 +133,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
   mkdirSync(stateDir, { recursive: true });
   const overridesPath = join(stateDir, "overrides.json");
   const metaPath = join(stateDir, "state.json");
+  const matchInfoPath = join(stateDir, "matchinfo.json");
 
   const writer = new Writer(settings as SettingsSeam, {
     backupPath: join(stateDir, "backups.json"),
@@ -179,6 +182,18 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
   };
   const saveOverrides = (map: Record<string, ModelCapability>): void => {
     writeFileSync(overridesPath, JSON.stringify(map, null, 2), "utf8");
+  };
+  // Per-model match attribution (source + confidence) for the UI.
+  const loadMatchInfo = (): MatchInfoMap => {
+    if (!existsSync(matchInfoPath)) return {};
+    try {
+      return JSON.parse(readFileSync(matchInfoPath, "utf8")) as MatchInfoMap;
+    } catch {
+      return {};
+    }
+  };
+  const saveMatchInfo = (map: MatchInfoMap): void => {
+    writeFileSync(matchInfoPath, JSON.stringify(map, null, 2), "utf8");
   };
   const loadMeta = (): Record<string, unknown> => {
     if (!existsSync(metaPath)) return {};
@@ -238,17 +253,19 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     route: ProviderRoute,
     listing: ListingRow[],
     overrides: Record<string, ModelCapability>,
-  ): { models: StoredModel[]; added: string[]; kept: string[] } {
+  ): { models: StoredModel[]; added: string[]; kept: string[]; matchinfo: Record<string, MatchInfo> } {
     const protocol = routeProtocol(route.api, "");
     const previous = new Map((route.models ?? []).map((m) => [m.id, m]));
     const seen = new Set<string>();
     const models: StoredModel[] = [];
     const added: string[] = [];
+    const matchinfo: Record<string, MatchInfo> = {};
 
     for (const row of listing) {
       seen.add(row.id);
       const match = matchModel({ id: row.id, endpoint: row, catalog, modelsDev: (id) => modelsDev.lookup(id), routeProtocol: protocol });
       const cap = match.capability;
+      matchinfo[row.id] = { sources: match.sources, confidence: match.confidence, baseIdUsed: match.baseIdUsed };
       const model: StoredModel = {
         id: row.id,
         name: match.name,
@@ -275,7 +292,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         }
       }
     }
-    return { models, added, kept };
+    return { models, added, kept, matchinfo };
   }
 
   async function refreshRoutes(routeIds: string[] | undefined, reason: string): Promise<Record<string, unknown>> {
@@ -290,6 +307,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     const overrides = loadOverrides();
     const next = structuredClone(providers);
     const perRoute: Record<string, unknown> = {};
+    const matchinfoAll = loadMatchInfo();
 
     for (const routeId of targets) {
       const route = next[routeId];
@@ -300,7 +318,8 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
       try {
         const apiKey = route.apiKeyEnv && credentials ? (await credentials.resolve(route.apiKeyEnv))?.value : undefined;
         const listing = await fetchListing(route, apiKey);
-        const { models, added, kept } = buildModels(routeId, route, listing, overrides);
+        const { models, added, kept, matchinfo } = buildModels(routeId, route, listing, overrides);
+        matchinfoAll[routeId] = matchinfo;
         if (models.length === 0 && !catalog?.providers.includes(routeId)) {
           perRoute[routeId] = { error: "listing returned no models; kept previous models (a custom route cannot be empty)" };
           continue;
@@ -311,6 +330,8 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         perRoute[routeId] = { error: String(error instanceof Error ? error.message : error) };
       }
     }
+
+    saveMatchInfo(matchinfoAll);
 
     const { stripped } = await writer.writeProviders(next, reason);
     const meta = loadMeta();
@@ -367,6 +388,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         revision,
         providers: masked,
         overrides: loadOverrides(),
+        matchinfo: loadMatchInfo(),
         backups: writer.listBackups().map((b) => ({ id: b.id, createdAt: b.createdAt, reason: b.reason, routes: Object.keys(b.providers).length })),
         meta: loadMeta(),
       });
@@ -445,11 +467,14 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         // Populate models BEFORE writing: pi-ai rejects an empty custom route
         // ("resolves no models"), so add must fetch the listing in the same step.
         const listing = detected?.listing ?? (await fetchListing(route, apiKeyValue, controller.signal));
-        const { models } = buildModels(id, route, listing, loadOverrides());
+        const { models, matchinfo } = buildModels(id, route, listing, loadOverrides());
         if (models.length === 0 && !catalog?.providers.includes(id)) {
           return json({ ok: false, error: "the endpoint returned no models; a custom route must list at least one model (check the baseURL, key and protocol)" }, 400);
         }
         route.models = models;
+        const mi = loadMatchInfo();
+        mi[id] = matchinfo;
+        saveMatchInfo(mi);
         next[id] = route;
         await writer.writeProviders(next, `upsert provider ${id}`);
         return json({ ok: true, id, detectedProtocol: detected?.api, modelCount: models.length, route: { ...route, apiKeyEnv: route.apiKeyEnv } });

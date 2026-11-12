@@ -66,6 +66,15 @@ export interface MatchResult {
   matchedProviders: string[];
   /** Protocol suggested by family heuristics (route may override). */
   suggestedProtocol: Protocol;
+  /** The base model id used for catalog matching, when the raw id missed. */
+  baseIdUsed?: string;
+}
+
+/** Per-model match attribution persisted to the UI (source + confidence). */
+export interface MatchInfo {
+  sources: CapabilitySource[];
+  confidence: number;
+  baseIdUsed?: string;
 }
 
 /** A provider route as stored in llm-pi-ai.providers.<route>. */
@@ -81,6 +90,9 @@ export interface ProviderRoute {
   defaultInput?: Modality[];
   [key: string]: unknown;
 }
+
+/** Per-route map of model id -> match attribution, persisted for the UI. */
+export type MatchInfoMap = Record<string, Record<string, MatchInfo>>;
 
 /** A model entry as stored in a route's models[] array. */
 export interface StoredModel extends ModelCapability {

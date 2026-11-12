@@ -9,11 +9,13 @@ import {
   lookupCatalog,
   type CatalogIndex,
 } from "./catalog.js";
+import { normalizeId, stripRoutingPrefix } from "./protocol.js";
 import {
   compatFor,
   defaultEfforts,
   familyOf,
   suggestProtocol,
+  baseModelId,
 } from "./protocol.js";
 import type {
   CapabilitySource,
@@ -90,8 +92,18 @@ export function matchModel(inputs: MatchInputs): MatchResult {
 
   // 4. pi-ai catalog (primary). Merge across providers; first non-undefined wins
   //    per field, but every describing provider is recorded for attribution.
+  let baseIdUsed: string | undefined;
   if (catalog) {
-    const entries = lookupCatalog(catalog, id);
+    let entries = lookupCatalog(catalog, id);
+    if (entries.length === 0) {
+      // Gateway rename (vendor prefix / routing tag / variant suffix): retry on
+      // the base model id so renamed real models still land on official data.
+      const base = baseModelId(id);
+      if (base !== normalizeId(id) && base !== stripRoutingPrefix(id)) {
+        const baseEntries = catalog.byBase.get(base) ?? [];
+        if (baseEntries.length > 0) { entries = baseEntries; baseIdUsed = base; }
+      }
+    }
     if (entries.length > 0) {
       let catalogCap: ModelCapability = {};
       for (const entry of entries) {
@@ -117,6 +129,7 @@ export function matchModel(inputs: MatchInputs): MatchResult {
     sources,
     matchedProviders,
     suggestedProtocol: suggestProtocol(id),
+    baseIdUsed,
   };
 }
 

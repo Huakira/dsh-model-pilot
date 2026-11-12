@@ -23,6 +23,25 @@ export function stripRoutingPrefix(id: string): string {
   return out;
 }
 
+/**
+ * Reduce a gateway model id to the base model id for catalog fallback matching.
+ * Gateways rename models (add a vendor prefix, a routing tag, or an uncensored/
+ * latest variant suffix); the official catalog lists the bare model. We strip a
+ * leading `vendor/` path segment, a trailing `:tag`, and a conservative variant
+ * suffix, but deliberately keep `-preview`/`-thinking` (dropping them would
+ * collapse a preview onto a different model).
+ */
+export function baseModelId(id: string): string {
+  let out = normalizeId(id);
+  // Drop a vendor prefix: keep only the last path segment(s) after the final "/".
+  if (out.includes("/")) out = out.slice(out.lastIndexOf("/") + 1);
+  // Drop a routing tag: qwen-4-max:fast -> qwen-4-max.
+  out = out.replace(/:[a-z0-9][a-z0-9._-]*$/, "");
+  // Drop a conservative variant suffix.
+  out = out.replace(/-(uncensored|latest|free|fast|slow)$/i, "");
+  return out;
+}
+
 /** Family buckets used for protocol + thinking-format heuristics. */
 export type Family =
   | "claude"
