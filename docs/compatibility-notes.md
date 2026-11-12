@@ -216,3 +216,23 @@ docs/             本文
 - 关键档位决策：`"off": "none"` 而非 off:null——pi-ai responses else 分支 `effort: thinkingLevelMap.off ?? "none"`：off:null → off 档/未选档都不发参数 = LongCat 默认开思考（off 档失效）；off:"none" → 两态都显式发 effort:none（真关思考）。
 - 校验改用真实 adapter 的 `Config` schema（schemastery）materialize——之前手切 index.js 源码段的 resolveProfiles 校验脚本已删；Config 路径更稳：`Config(providers)` 返回归一化结果并就地拒绝非法字段。
 - 重启验证：seams 全 true、GUI 200、config 经 schema 往返未变。
+
+## 0.1.18 — 按模型自动匹配协议（2026-11-12）
+
+### 语义
+用户拍板：智能匹配是 **per-model** 的——「claude 匹配 anthropic、gpt 匹配 responses」。pi-ai 协议只能挂在 route 级（models[] 的 api 被忽略），所以插件自动把家族协议不同的模型分到「协议分流」shard（`<route>-<protocol>`，同 baseURL/key），原 provider 卡片仍显示该模型并标 `→ 协议`。
+
+### 实现
+- `src/split.ts`（新，纯函数，可单测）：`planProtocolSplit()` 决定哪些模型留在原路由、哪些进哪个 shard；pin（用户手动移回）优先且永不再自动分；适配器不支持的协议（如 gemini）留在原路由。
+- `shardBaseURL(protocol, baseURL)`：**anthropic shard 必须去掉尾部 `/v1`**——Anthropic SDK 自己在 baseURL 后拼 `/v1/messages`，否则请求落到 `/v1/v1/messages`。responses/completions 保持 baseURL 原样（pi-ai 自己拼 `/responses`、`/chat/completions`）。已在真实网关验证。
+- 分流前先验证端点真的会应答该协议：`probeProtocolEndpoint()`（空 body POST，404/405/501 才算不支持），结果按 baseURL 缓存 12h 于 `state.protocolProbe`。不会把能用的模型搬到网关不支持的协议上。
+- 刷新：`refreshRoutes` 对源路由跑计划、重建被触及的 shard（保留手工移入的模型），auto moves 记 `meta.moves` 并持久化（此前 moves 修改只存在内存，是 bug，已修）；模型消失或家族重新匹配时自动清除 auto move。upsert（新增 provider）后也跑一次分流。
+- 配置项 `autoProtocolSplit`（默认 true），设置页「按模型匹配协议」开关 + 说明文案。
+
+### 实测（2026-11-12，axonhub）
+- 三个端点都真实可用：`/v1/messages`（anthropic 形状 `msg_…`）、`/v1/responses`（`resp_…`）、`/v1/chat/completions`。
+- 分流结果：4 个 claude → `axonhub-anthropic-messages`（opus-5-5 / opus-4-6 / sonnet-5-5 / fable-5-2，逐个用 anthropic 线格式实测通过）；gpt-6.1-sol + grok-4.6 + gpt-6-astra → `axonhub-openai-responses`（6.1-sol 实测通过；grok 额度耗尽、gpt-6-astra 上游报 model not found——后两者在 completions 下同样失败，与分流无关）；其余 20 个留 completions。
+- 真实适配器校验：`Config(providers)` materialize 出 3 条路由，anthropic shard 的 baseURL 为 `https://axon.20031014.xyz`（无 `/v1`），重启无拒绝日志，seams 全 true。
+
+### 版本流水
+- 0.1.17 → 0.1.18（commit 555b9a1），68 测试全过（新增 split 单测 11 条）。
