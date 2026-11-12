@@ -499,5 +499,10 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     ctx.effect?.(() => () => clearInterval(timer), "dsh-model-pilot: auto refresh");
   }
 
-  log(`host applied (seams: ${JSON.stringify(seams)})`);
+  // Log activation after the async sources settle so the reported `catalog`
+  // seam reflects the loaded catalog (it is mutated in place by sourcesReady).
+  // Logging synchronously here would snapshot catalog:false before the load.
+  void sourcesReady
+    .catch((error) => warn(`source initialization failed: ${String(error)}`))
+    .then(() => log(`host applied (seams: ${JSON.stringify(seams)})`));
 }
