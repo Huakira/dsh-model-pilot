@@ -210,3 +210,9 @@ docs/             本文
 ### 版本流水
 - 0.1.16 → 0.1.17（commits 56cf065→rebase→64446c4 + 7cec72a lib rebuild；远端 2fd6c99 是 0.1.17 的 YAML `off` 键修复，rebase 已并入）。57 测试全过。live 0.1.17，seams 全 true。
 - LongCat-2.5 当前配置保持 0.1.16 定稿：completions + deepseek format + low/high/max→"high" 别名档（用户当前工作配置，未再移动）。
+
+## 0.1.17 应用案例 — LongCat-2.5 单模型协议覆盖（2026-11-12）
+- User (m00990): "你把longcat单个覆盖吧" → 按插件 move 机制手工执行：LongCat-2.5 移入 shard `axonhub-openai-responses`（同 baseURL+key），axonhub 主路由留 27 模型不动；meta.moves 记录、overrides.json/matchinfo 搬家。
+- 关键档位决策：`"off": "none"` 而非 off:null——pi-ai responses else 分支 `effort: thinkingLevelMap.off ?? "none"`：off:null → off 档/未选档都不发参数 = LongCat 默认开思考（off 档失效）；off:"none" → 两态都显式发 effort:none（真关思考）。
+- 校验改用真实 adapter 的 `Config` schema（schemastery）materialize——之前手切 index.js 源码段的 resolveProfiles 校验脚本已删；Config 路径更稳：`Config(providers)` 返回归一化结果并就地拒绝非法字段。
+- 重启验证：seams 全 true、GUI 200、config 经 schema 往返未变。
