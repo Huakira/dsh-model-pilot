@@ -102,8 +102,14 @@ export function matchModel(inputs: MatchInputs): MatchResult {
         catalogCap = overlay(catalogCap, capabilityFromEntry(entry));
         if (entry.provider && !matchedProviders.includes(entry.provider)) matchedProviders.push(entry.provider);
       }
-      // Catalog compat should not clobber the protocol-specific thinkingFormat
-      // we derived for THIS route unless the catalog names one explicitly.
+      // Catalog compat must NOT clobber the family-derived thinkingFormat:
+      // the catalog matches on the model id across ALL providers, so a
+      // third-party hosting variant (e.g. qwen-token-plan/deepseek-*) would
+      // stamp its own wire format (qwen) onto a model whose family speaks a
+      // different one (deepseek). The family-derived format describes the
+      // model itself; the catalog's describes that provider's adapter, which
+      // is not the adapter this route uses.
+      if (catalogCap.compat) delete catalogCap.compat.thinkingFormat;
       cap = overlay(cap, catalogCap);
       sources.push("pi-ai-catalog");
     }
@@ -114,20 +120,37 @@ export function matchModel(inputs: MatchInputs): MatchResult {
   if (modelsDev) {
     const md = modelsDev(id);
     if (md && Object.keys(md).length > 0) {
-      cap = overlay(cap, md);
+      cap = overlaySanitized(cap, md);
       sources.push("models.dev");
     } else if (modelsDevBase) {
       const base = baseModelId(id);
       if (base !== normalizeId(id) && base !== stripRoutingPrefix(id)) {
         const mdBase = modelsDevBase(id);
         if (mdBase && Object.keys(mdBase).length > 0) {
-          cap = overlay(cap, mdBase);
+          cap = overlaySanitized(cap, mdBase);
           sources.push("models.dev");
           if (!baseIdUsed) baseIdUsed = base;
         }
       }
     }
   }
+
+/**
+ * Overlay a models.dev capability, but distrust a maxTokens that equals (or
+ * exceeds) the context window: several models.dev aggregators copy the
+ * context size into limit.output (e.g. deepseek-v4.1-flash-1017 lists
+ * 1048576/1048576), which would hand the adapter a bogus output budget and
+ * turn a model loop into a very long fuse. Dropping it keeps the
+ * lower-priority catalog/route value instead.
+ */
+function overlaySanitized(under: ModelCapability, over: ModelCapability): ModelCapability {
+  const md = { ...over };
+  const ctx = md.contextWindow ?? under.contextWindow;
+  if (md.maxTokens !== undefined && ctx !== undefined && md.maxTokens >= ctx) {
+    delete md.maxTokens;
+  }
+  return overlay(under, md);
+}
 
   // Confidence = the best source that contributed, capped by agreement.
   const confidence = sources.reduce((best, s) => Math.max(best, SOURCE_CONFIDENCE[s]), 0);

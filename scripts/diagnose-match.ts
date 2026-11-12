@@ -41,7 +41,7 @@ for (const row of listing) {
   if (m.confidence < 0.6) guesses++;
   console.log(`${row.id}${flag}`);
   console.log(`   confidence=${m.confidence} sources=[${m.sources.join(",")}] catalogHits=${catHits.length}${catHits.length ? "(" + catHits.slice(0, 3).map((e) => `${e.provider}/${e.id}`).join(", ") + ")" : ""} modelsDev=${mdHit ? "yes" : "no"}`);
-  console.log(`   ctx=${cap.contextWindow} maxTok=${cap.maxTokens} input=[${(cap.input ?? []).join(",")}] efforts=${effortKeys} compat=[${Object.keys(cap.compat ?? {}).join(",")}]`);
+  console.log(`   ctx=${cap.contextWindow} maxTok=${cap.maxTokens} input=[${(cap.input ?? []).join(",")}] efforts=${effortKeys} compat=${JSON.stringify(cap.compat)}`);
   console.log(`   norm="${normalizeId(row.id)}" stripped="${stripRoutingPrefix(row.id)}"`);
 }
 console.log(`\n${guesses}/${listing.length} models fall back to family-default guesses (no authoritative source matched).`);
