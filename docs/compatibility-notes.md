@@ -193,3 +193,20 @@ docs/             本文
 - 成因：有环节按 YAML 1.1 解析 `cordis.patch.yml`，把裸键 `off` 读成布尔 false，再写回成字符串键 `'false'`；schema 只认 off/minimal/low/medium/high/xhigh/max。证据：11:52 快照里 26 个模型的 `off` 全变成 `false`，03:54 的快照仍是 `off`。具体是哪个写入方没定位。
 - 修复：`sanitizeReasoningEfforts` 把键 `"false"` 当作 `off`，之后 model-pilot 的任何写入都会自愈。它管不到插件项已失效时的手工修复，那种情况要先改文件再重启。
 - 版本流水：0.1.16 → 0.1.17，57 测试全过。
+
+## 0.1.17 — per-model 协议 = 透明覆盖（2026-11-12）
+
+### 设计定稿（用户拍板）
+- 「智能匹配协议」的语义是 **per-model**：匹配错只修那一个模型，其他模型不动。用户明确否决两个暴露式方案：①镜像路由作为独立 provider 卡出现（= 增加新 provider）；②整路由 api 覆写连坐 27 个好模型。
+- pi-ai 硬约束：协议是 route 级（models[] 条目的 api 被 resolveEntry 静默忽略），per-model 协议只能靠镜像路由实现。0.1.17 把它做成**透明的覆盖体验**。
+
+### 实现
+- **镜像路由 = 协议分流 shard**，不再是"新 provider"：独立设置页里 shard 渲染为父路由卡片内的缩进子卡（「协议分流」徽标 ×N），不占顶层 provider 列表。官方 Models 页仍是每路由一卡（shipped UI 无法隐藏，卡片标题显示 "hub · responses"）。
+- **源卡片保留被移走的模型**：meta.moves（state.json）记录 `<route>/<model>` → { to, protocol }；state 端点新增 `moves`；ModelTable 在源路由表里显示该模型行（`→ <protocol>` 徽标 + "由协议分流路由服务"），模型不再从页面上消失。
+- **move-back**：对 shard 里的模型移动到父协议 = 合并回父路由，shard 空则删除；moves 记录清除。
+- **refresh 守卫升级**：shard 路由（id 尾 -<protocol>）refresh 直接 skip（hand-placed，不从 listing 重建）；源路由 refresh 后按 moves 重放，被移走的模型不会被 listing 重新塞回源路由。
+- override 端点不变（`{ moveToProtocol }`），新增 move-back 分支与 meta.moves 持久化。
+
+### 版本流水
+- 0.1.16 → 0.1.17（commits 56cf065→rebase→64446c4 + 7cec72a lib rebuild；远端 2fd6c99 是 0.1.17 的 YAML `off` 键修复，rebase 已并入）。57 测试全过。live 0.1.17，seams 全 true。
+- LongCat-2.5 当前配置保持 0.1.16 定稿：completions + deepseek format + low/high/max→"high" 别名档（用户当前工作配置，未再移动）。
