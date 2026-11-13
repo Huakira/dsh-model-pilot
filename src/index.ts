@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { loadPiAiCatalog, type CatalogIndex } from "./catalog.js";
 import { matchModel } from "./matcher.js";
-import { routeProtocol, suggestProtocol, compatFor } from "./protocol.js";
+import { routeProtocol, compatFor, normalizeRules, protocolByRules } from "./protocol.js";
 import { planProtocolSplit, shardRoute } from "./split.js";
 import { Writer, readProviders, extractSupportedProtocols, PI_AI_NS } from "./writer.js";
 import { fetchGeminiListing, probeModel, probeProtocolEndpoint, GEMINI_DEFAULT_INPUT } from "./fetchers.js";
@@ -48,6 +48,10 @@ export const Config = Schema.object({
   refreshIntervalHours: Schema.natural().min(1).default(24),
   backupKeep: Schema.natural().min(1).default(10),
   autoProtocolSplit: Schema.boolean().default(true),
+  protocolRules: Schema.object({
+    responses: Schema.array(Schema.string()),
+    anthropic: Schema.array(Schema.string()),
+  }),
 });
 
 interface PilotConfig {
@@ -58,6 +62,7 @@ interface PilotConfig {
   refreshIntervalHours: number;
   backupKeep: number;
   autoProtocolSplit: boolean;
+  protocolRules?: { responses?: string[]; anthropic?: string[] };
 }
 
 /** Minimal connection fetch seam (structural). */
@@ -108,6 +113,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     refreshIntervalHours: config.refreshIntervalHours ?? 24,
     backupKeep: config.backupKeep ?? 10,
     autoProtocolSplit: config.autoProtocolSplit ?? true,
+    protocolRules: normalizeRules(config.protocolRules),
   };
 
   const settings = ctx.settings as SettingsSeam | undefined;
@@ -374,7 +380,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         // the source route even though the listing still advertises it.
         const moves = movesAll;
         const movedOut = Object.entries(moves)
-          .filter(([k, v]) => k.startsWith(routeId + "/") && v.to !== routeId)
+          .filter(([k, v]) => k.startsWith(routeId + "/") && v.to !== routeId && v.auto !== true && !v.pinned)
           .map(([k]) => k.slice(routeId.length + 1));
         if (movedOut.length > 0) {
           const gone = new Set(movedOut);
@@ -400,16 +406,32 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
             models,
             moves,
             supportedProtocols: allowed,
-            suggest: suggestProtocol,
+            suggest: (id) => protocolByRules(id, options.protocolRules),
             compatFor,
           });
           models = plan.stay;
+          const prevMoves = { ...movesAll };
           for (const key of Object.keys(movesAll)) delete movesAll[key];
           Object.assign(movesAll, plan.moves);
+          // A shard model stays only when the user moved it there by hand, or
+          // the parent listing does not advertise it (hand-placed in config).
+          // Anything the rules used to send here is recomputed from the plan,
+          // so a rule change takes models back (0.1.23 fix).
+          const listedIds = new Set(listing.map((r) => r.id));
+          const keepOnShard = (sid: string, id: string) => {
+            const mv = prevMoves[`${routeId}/${id}`];
+            if (mv && mv.auto !== true && mv.to === sid) return true;
+            return !listedIds.has(id);
+          };
+          for (const sid of Object.keys(next)) {
+            if (!sid.startsWith(`${routeId}-`) || plan.shards[sid]) continue;
+            if (!/-(anthropic-messages|openai-completions|openai-responses|gemini)$/.test(sid)) continue;
+            next[sid] = { ...next[sid], models: (next[sid].models ?? []).filter((m) => keepOnShard(sid, m.id)) };
+          }
           for (const [sid, carried] of Object.entries(plan.shards)) {
             const existing = next[sid]?.models ?? [];
             // Keep hand-moved models (moves entry without auto) already there.
-            const handMoved = existing.filter((m) => moves[`${sid}/${m.id}`]?.auto !== true && !carried.some((c) => c.id === m.id));
+            const handMoved = existing.filter((m) => keepOnShard(sid, m.id) && !carried.some((c) => c.id === m.id));
             // A shard inherits the parent route's transport settings (headers,
             // thinkingBudgets, default*, compat, image budgets, …) and only
             // overrides the protocol-scoped fields. Creating a route with a bare
@@ -756,6 +778,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
       for (const key of ["managedRoutes", "probeEnabled", "deleteSync", "autoRefresh", "refreshIntervalHours", "backupKeep", "autoProtocolSplit"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
+      if (body.protocolRules !== undefined) patch.protocolRules = normalizeRules(body.protocolRules);
       if (seams.settings) {
         const descriptor = settings!.describe().find((d) => d.ns === name);
         await settings!.update(name, patch, descriptor?.revision);

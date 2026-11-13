@@ -26,7 +26,8 @@ export interface SplitPlanInput {
   moves: Record<string, ProtocolMove>;
   /** Protocols the installed adapter actually implements. */
   supportedProtocols?: string[];
-  suggest: (modelId: string) => Protocol;
+  /** undefined = stay on the route (no rule matched). */
+  suggest: (modelId: string) => Protocol | undefined;
   compatFor: (modelId: string, protocol: Protocol) => ModelCapability["compat"];
 }
 
@@ -56,7 +57,7 @@ export function planProtocolSplit(input: SplitPlanInput): SplitPlan {
   for (const model of models) {
     if (moves[`${routeId}/${model.id}`]?.pinned) { stay.push(model); continue; }
     const target = suggest(model.id);
-    if (target === routeApi || (supportedProtocols && !supportedProtocols.includes(target))) {
+    if (target === undefined || target === routeApi || (supportedProtocols && !supportedProtocols.includes(target))) {
       stay.push(model);
       continue;
     }

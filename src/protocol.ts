@@ -207,3 +207,54 @@ export function compatFor(id: string, protocol: Protocol): ModelCompat {
   }
   return compat;
 }
+
+/**
+ * User-editable routing rules (0.1.23). Which models go to Responses and which
+ * to Anthropic; everything else stays on the provider route's own protocol.
+ * Patterns follow the gateway convention: case-insensitive substring, or a
+ * full-id glob when the pattern contains `*` or `?`. Anthropic is checked
+ * first. Matched against the id with routing prefixes stripped and the raw id.
+ */
+export interface ProtocolRules {
+  responses: string[];
+  anthropic: string[];
+}
+
+export const DEFAULT_PROTOCOL_RULES: ProtocolRules = {
+  responses: ["gpt-*", "chatgpt*", "o1*", "o3*", "o4*", "grok*", "muse-*", "longcat*"],
+  anthropic: ["claude*"],
+};
+
+function globToRegExp(glob: string): RegExp {
+  const esc = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${esc}$`, "i");
+}
+
+export function matchesPattern(pattern: string, id: string): boolean {
+  const pat = pattern.trim();
+  if (!pat) return false;
+  const ids = [id, stripRoutingPrefix(id), id.slice(id.lastIndexOf("/") + 1)];
+  if (/[*?]/.test(pat)) {
+    const re = globToRegExp(pat);
+    return ids.some((x) => re.test(x));
+  }
+  const needle = pat.toLowerCase();
+  return ids.some((x) => x.toLowerCase().includes(needle));
+}
+
+export function normalizeRules(raw: unknown): ProtocolRules {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const list = (v: unknown, fallback: string[]) =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter(Boolean) : fallback;
+  return {
+    responses: list(r.responses, DEFAULT_PROTOCOL_RULES.responses),
+    anthropic: list(r.anthropic, DEFAULT_PROTOCOL_RULES.anthropic),
+  };
+}
+
+/** Protocol a model is routed to by the rules; undefined = stay on the route. */
+export function protocolByRules(id: string, rules: ProtocolRules): Protocol | undefined {
+  if (rules.anthropic.some((p) => matchesPattern(p, id))) return "anthropic-messages";
+  if (rules.responses.some((p) => matchesPattern(p, id))) return "openai-responses";
+  return undefined;
+}

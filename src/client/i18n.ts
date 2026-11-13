@@ -65,7 +65,11 @@ const en: Record<string, string> = {
   servedByMirror: "Served by the protocol shard (same baseURL + key).",
   shard: "Protocol shard",
   autoProtocolSplit: "Match protocol per model",
-  autoProtocolSplitHint: "Each model is matched to its own wire protocol (Claude → anthropic, GPT/Grok → responses, others → completions) instead of forcing the whole provider onto one. Models whose family speaks another protocol are carried on a protocol shard under this provider.",
+  autoProtocolSplitHint: "Each model is matched to its own wire protocol by the rules below instead of forcing the whole provider onto one. Matched models are carried on a protocol shard under this provider.",
+  protocolRules: "Routing rules",
+  protocolRulesHint: "One pattern per line. Plain text matches any part of the model id (case-insensitive); * and ? make it a whole-id wildcard. Anthropic is checked first; models that match neither stay on the provider's own protocol. Takes effect on the next refresh.",
+  rulesAnthropic: "→ anthropic-messages",
+  rulesResponses: "→ openai-responses",
   mirroredBadge: "mirror",
 };
 
@@ -135,7 +139,11 @@ const zh: Record<string, string> = {
   servedByMirror: "由协议分流路由服务（同 baseURL + 密钥）。",
   shard: "协议分流",
   autoProtocolSplit: "按模型匹配协议",
-  autoProtocolSplitHint: "每个模型各自匹配线路协议（Claude → anthropic，GPT/Grok → responses，其余 → completions），而不是整个提供商绑定一个协议。家族协议不同的模型会被放到该提供商下的协议分流里，卡片上仍显示为已覆盖。",
+  autoProtocolSplitHint: "按下方规则给每个模型匹配线路协议，而不是整个提供商绑定一个协议。命中规则的模型会被放到该提供商下的协议分流里，卡片上仍显示为已覆盖。",
+  protocolRules: "分流规则",
+  protocolRulesHint: "每行一条。普通文字匹配模型 id 的任意部分（不分大小写）；带 * 或 ? 时按整个 id 通配。先查 anthropic；两边都没命中的模型留在提供商自己的协议上。下次刷新生效。",
+  rulesAnthropic: "→ anthropic-messages",
+  rulesResponses: "→ openai-responses",
   mirroredBadge: "镜像",
 };
 

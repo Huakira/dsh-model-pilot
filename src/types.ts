@@ -178,6 +178,8 @@ export interface PilotOptions {
    * original provider card.
    */
   autoProtocolSplit: boolean;
+  /** User routing rules: patterns sent to Responses / Anthropic; others stay. */
+  protocolRules: { responses: string[]; anthropic: string[] };
 }
 
 export const DEFAULT_OPTIONS: PilotOptions = {
@@ -189,4 +191,8 @@ export const DEFAULT_OPTIONS: PilotOptions = {
   refreshIntervalHours: 24,
   backupKeep: 10,
   autoProtocolSplit: true,
+  protocolRules: {
+    responses: ["gpt-*", "chatgpt*", "o1*", "o3*", "o4*", "grok*", "muse-*", "longcat*"],
+    anthropic: ["claude*"],
+  },
 };

@@ -232,7 +232,34 @@ function OptionsPanel({ state, busy, run }: { state: StateResponse | null; busy:
           <input type="checkbox" checked={local.autoProtocolSplit !== false} onChange={(e) => set("autoProtocolSplit", e.target.checked)} />
           <div style={styles.muted}>{t("autoProtocolSplitHint")}</div>
         </label>
+        <RulesEditor rules={local.protocolRules as { responses?: string[]; anthropic?: string[] } | undefined} onChange={(r) => set("protocolRules", r)} />
         <button style={styles.btnPrimary} disabled={busy} onClick={() => run(() => api.options(local), t("ok"))}>{t("save")}</button>
+      </div>
+    </div>
+  );
+}
+
+function RulesEditor({ rules, onChange }: { rules?: { responses?: string[]; anthropic?: string[] }; onChange: (r: { responses: string[]; anthropic: string[] }) => void }) {
+  const toText = (v?: string[]) => (v ?? []).join("\n");
+  const [resp, setResp] = useState(toText(rules?.responses));
+  const [anth, setAnth] = useState(toText(rules?.anthropic));
+  useEffect(() => { setResp(toText(rules?.responses)); setAnth(toText(rules?.anthropic)); }, [JSON.stringify(rules)]);
+  const parse = (s: string) => s.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+  const push = (r: string, a: string) => onChange({ responses: parse(r), anthropic: parse(a) });
+  const box = { ...styles.input, width: "100%", minHeight: 72, fontFamily: "monospace" } as const;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={styles.label}>{t("protocolRules")}</div>
+      <div style={styles.muted}>{t("protocolRulesHint")}</div>
+      <div style={styles.row}>
+        <label style={{ ...styles.field, flex: 1 }}>
+          <span style={styles.label}>{t("rulesAnthropic")}</span>
+          <textarea style={box} value={anth} onChange={(e) => { setAnth(e.target.value); push(resp, e.target.value); }} />
+        </label>
+        <label style={{ ...styles.field, flex: 1 }}>
+          <span style={styles.label}>{t("rulesResponses")}</span>
+          <textarea style={box} value={resp} onChange={(e) => { setResp(e.target.value); push(e.target.value, anth); }} />
+        </label>
       </div>
     </div>
   );

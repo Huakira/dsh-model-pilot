@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { apply, name } from "../src/index.js";
@@ -212,4 +213,38 @@ describe("host integration", () => {
     expect(settings.getProviders()["anthropic-route"].api).toBe("anthropic-messages");
     expect(settings.getProviders()["anthropic-route"].models.length).toBe(1);
   });
+
+  it("refresh takes a model back from a shard when the rules no longer send it there (0.1.23)", async () => {
+    const settings = mockSettings({
+      hub: { api: "openai-completions", baseURL: "https://hub.example/v1", apiKeyEnv: "K", models: [{ id: "kimi-k3" }] },
+      "hub-anthropic-messages": { api: "anthropic-messages", baseURL: "https://hub.example", apiKeyEnv: "K",
+        models: [{ id: "minimax-m3" }, { id: "hand-placed-x" }, { id: "moved-by-hand" }] },
+    });
+    const doc = tempDocPath();
+    settings.seam.documentPath = doc;
+    const stateDir = join(dirname(doc), ".dsh-model-pilot");
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, "state.json"), JSON.stringify({ moves: {
+      "hub/minimax-m3": { to: "hub-anthropic-messages", protocol: "anthropic-messages", auto: true },
+      "hub/moved-by-hand": { to: "hub-anthropic-messages", protocol: "anthropic-messages" },
+    } }));
+    const listing = [{ id: "kimi-k3" }, { id: "minimax-m3" }, { id: "moved-by-hand" }];
+    const { ctx, routes } = mockCtx(settings.seam, listing);
+    apply(ctx, {} as any);
+    const refresh = await callRoute(routes, "/api/dsh-model-pilot/refresh", "POST", {});
+    expect(refresh.data.ok).toBe(true);
+    const p = settings.getProviders();
+    expect(p.hub.models.map((m: any) => m.id).sort()).toEqual(["kimi-k3", "minimax-m3"]);
+    expect(p["hub-anthropic-messages"].models.map((m: any) => m.id).sort()).toEqual(["hand-placed-x", "moved-by-hand"]);
+  });
+
+  it("options endpoint saves custom protocol rules", async () => {
+    const settings = mockSettings({});
+    settings.seam.documentPath = tempDocPath();
+    const { ctx, routes } = mockCtx(settings.seam, []);
+    apply(ctx, {} as any);
+    const res = await callRoute(routes, "/api/dsh-model-pilot/options", "POST", { protocolRules: { responses: [" gpt-* ", ""], anthropic: ["claude*", "minimax"] } });
+    expect(res.data.options.protocolRules).toEqual({ responses: ["gpt-*"], anthropic: ["claude*", "minimax"] });
+  });
 });
+
