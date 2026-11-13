@@ -296,3 +296,16 @@ const shard = next[sid] ?? { displayName, api, baseURL, apiKeyEnv };
 - 插件自身的写入路径没这个问题：`writer.sanitizeCompatByProtocol` 同时清洗 route 级和 model 级 compat。事故原因是我用离线脚本直接写 YAML，绕过了 writer。
 - 已把两条规则写进 `dsh-plugin-dev` 技能（PR #99，版本 1.0.87）：settings 整段替换语义、compat 协议门禁。
 - 重启验证：0.1.21 live、seams 全 true、无 compat 报错、三条路由各 16 项配置（headers/thinkingBudgets 在）、minimax-m3 走 `/v1/messages` 实测 200。
+
+## 0.1.22 — MiniMax 改走 openai-completions（2026-11-13）
+
+| 家族 | 协议 |
+|---|---|
+| claude | anthropic-messages |
+| gpt、grok、muse、longcat | openai-responses |
+| 其余（glm、qwen、kimi、deepseek、**minimax**、step、dots、mimo…） | openai-completions |
+
+- 原因：让 anthropic 路由（`/v1/messages`）只剩 Claude，billion-context 按上游地址的线路设置（renderNone、推理强度锁）就只作用于 Claude，不用再加子域名。
+- 实测（经 axonhub `/v1/chat/completions`，minimax-m3.1-flash 与 minimax-m3）：工具调用往返正常；流式思考内容单独在 `reasoning_content`；第二轮缓存命中约 97%。
+- compat：minimax 在 completions 上与 deepseek 一样设 `requiresReasoningContentOnAssistantMessages: true`，thinkingFormat 为 openai（发 `reasoning_effort`）。MiniMax 文档要求多轮工具调用回传 `reasoning_content`，pi-ai 按 signature 回写该字段。
+- 推理档位：M3.1-Flash 永远思考，`none`/disabled 返回 400，档位 low/medium/high/xhigh/max，不给 off；其他 MiniMax 模型在 completions 上忽略 `reasoning_effort`，只给一档 high（保持 reasoning 标记以便回传思考）。

@@ -221,3 +221,18 @@ describe("writer schema gating", () => {
     expect(extractCompatKeys({})).toBeUndefined();
   });
 });
+describe("minimax on chat completions (2026-11-13)", () => {
+  it("echoes reasoning_content on assistant messages", () => {
+    const c = compatFor("minimax-m3.1-flash", "openai-completions");
+    expect(c.requiresReasoningContentOnAssistantMessages).toBe(true);
+    expect(c.thinkingFormat).toBe("openai");
+    expect(c.supportsReasoningEffort).toBe(true);
+  });
+  it("m3.1-flash offers low..max and no off", () => {
+    const e = defaultEfforts("minimax-m3.1-flash");
+    expect(e).toEqual({ low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" });
+  });
+  it("other minimax models offer a single level", () => {
+    expect(defaultEfforts("minimax-m3")).toEqual({ high: "high" });
+  });
+});

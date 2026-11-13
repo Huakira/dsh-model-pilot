@@ -95,7 +95,8 @@ describe("shardBaseURL", () => {
 describe("suggestProtocol mapping (user's gateway convention)", () => {
   const cases: Array<[string, string]> = [
     ["claude-opus-5-5", "anthropic-messages"],
-    ["minimax-m3.1-flash", "anthropic-messages"],
+    ["minimax-m3.1-flash", "openai-completions"],
+    ["minimax-m3", "openai-completions"],
     ["gpt-6.1-sol", "openai-responses"],
     ["grok-4.6", "openai-responses"],
     ["muse-spark-1.3-contributor", "openai-responses"],

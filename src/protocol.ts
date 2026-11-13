@@ -80,17 +80,23 @@ export function familyOf(id: string): Family {
 /**
  * Suggest a wire protocol from the model family.
  *
- * The mapping is the user's gateway convention (2026-11-12):
- *   claude, minimax            → anthropic-messages
+ * The mapping is the user's gateway convention (2026-11-12, minimax moved
+ * 2026-11-13):
+ *   claude                     → anthropic-messages
  *   gpt, grok, muse, longcat   → openai-responses
- *   everything else (glm, qwen, kimi, deepseek, …) → openai-completions
+ *   everything else (glm, qwen, kimi, deepseek, minimax, …) → openai-completions
+ *
+ * MiniMax left anthropic-messages so that the anthropic route carries Claude
+ * alone: lane-scoped proxy settings (billion-context's per-route renderNone and
+ * effort pin, keyed by upstream URL) then apply to Claude only. MiniMax's
+ * Chat Completions endpoint returns thinking in `reasoning_content`, which
+ * pi-ai echoes back on assistant messages, so interleaved thinking survives.
  * Gemini keeps its native protocol name; adapters that do not implement it
  * simply leave those models on the route's own protocol.
  */
 export function suggestProtocol(id: string): Protocol {
   switch (familyOf(id)) {
     case "claude":
-    case "minimax":
       return "anthropic-messages";
     case "gemini":
       return "gemini";
@@ -161,8 +167,15 @@ export function defaultEfforts(id: string): ReasoningEfforts | false {
       return { off: null, low: "low", medium: "medium", high: "high" };
     case "gemini":
       return { off: null, low: "low", medium: "medium", high: "high" };
-    case "kimi":
     case "minimax":
+      // M3.1-Flash always thinks: `none`/disabled is a 400, and its depth goes
+      // low..max. Other MiniMax models ignore reasoning_effort on Chat
+      // Completions, so one level is offered (still marks the model reasoning,
+      // which keeps reasoning_content echoed back).
+      return /m3\.1-flash/.test(id.toLowerCase())
+        ? { low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" }
+        : { high: "high" };
+    case "kimi":
     case "mistral":
       return { off: null, low: "low", high: "high" };
     default:
@@ -188,7 +201,8 @@ export function compatFor(id: string, protocol: Protocol): ModelCompat {
   // Self-hosted relays generally reject the developer role; the catalog may
   // override. Default false is the safe relay assumption (matches better-effort).
   compat.supportsDeveloperRole = false;
-  if (familyOf(id) === "deepseek" && protocol === "openai-completions") {
+  const fam = familyOf(id);
+  if ((fam === "deepseek" || fam === "minimax") && protocol === "openai-completions") {
     compat.requiresReasoningContentOnAssistantMessages = true;
   }
   return compat;
