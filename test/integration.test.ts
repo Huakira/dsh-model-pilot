@@ -246,5 +246,21 @@ describe("host integration", () => {
     const res = await callRoute(routes, "/api/dsh-model-pilot/options", "POST", { protocolRules: { responses: [" gpt-* ", ""], anthropic: ["claude*", "minimax"] } });
     expect(res.data.options.protocolRules).toEqual({ responses: ["gpt-*"], anthropic: ["claude*", "minimax"] });
   });
+
+  it("default rules apply when config omits protocolRules, and an emptied shard is removed", async () => {
+    const settings = mockSettings({
+      hub: { api: "openai-completions", baseURL: "https://hub.example/v1", apiKeyEnv: "K", models: [] },
+      "hub-openai-responses": { api: "openai-responses", baseURL: "https://hub.example/v1", apiKeyEnv: "K", models: [{ id: "minimax-m3" }] },
+    });
+    settings.seam.documentPath = tempDocPath();
+    const { ctx, routes } = mockCtx(settings.seam, [{ id: "minimax-m3" }, { id: "kimi-k3" }]);
+    apply(ctx, { protocolRules: { responses: undefined, anthropic: undefined } } as any);
+    const st = await callRoute(routes, "/api/dsh-model-pilot/state", "GET");
+    expect(st.data.options.protocolRules.anthropic).toEqual(["claude*"]);
+    await callRoute(routes, "/api/dsh-model-pilot/refresh", "POST", {});
+    const p = settings.getProviders();
+    expect(p["hub-openai-responses"]).toBeUndefined();
+    expect(p.hub.models.map((m: any) => m.id).sort()).toEqual(["kimi-k3", "minimax-m3"]);
+  });
 });
 

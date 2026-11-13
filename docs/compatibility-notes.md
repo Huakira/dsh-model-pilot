@@ -315,3 +315,8 @@ const shard = next[sid] ?? { displayName, api, baseURL, apiKeyEnv };
 - **新选项 `protocolRules`**（设置页「分流规则」）：两张模式表，`anthropic` 和 `responses`；先查 anthropic，都没命中的模型留在提供商自己的协议上。模式与网关约定一致：普通文字按子串匹配（不分大小写），带 `*`/`?` 时按整个 id 通配。默认值等于原来的家族映射：anthropic `claude*`；responses `gpt-* chatgpt* o1* o3* o4* grok* muse-* longcat*`。家族启发式只再用于推理档位和 compat，不再决定协议。
 - **修 bug**：0.1.22 把 MiniMax 改回 completions 后，刷新没把它从 `<route>-anthropic-messages` 收回来，反而从父路由消失。两处原因：① 刷新先按 `meta.moves` 把"已移出"的模型从父路由剔掉，连自动移动也算，随后分流计划又把这条自动记录删了；② 分流路由保留"手工放置"模型时用 `moves["<分流路由>/<id>"]` 查记录，键写错，自动放进去的模型永远被当成手工的。现在只有手工移动会把模型从父路由拿走；分流路由上的模型只在"手工移到这里"或"父路由列表里没有它"时保留，其余按本次计划重排。分流路由即使本次没有新模型也会被清理。
 - 测试 104 个全过（新增规则匹配、留在原路由、刷新收回、选项保存）。
+
+## 0.1.24 — 规则默认值与空分流路由（2026-11-13）
+
+- 0.1.23 上线后实测：schema 里 `protocolRules` 两个数组没写默认值，DSH 解析配置时得到空表，规则全不命中，刷新会把 Claude 也收回父路由。现在 schema 默认值等于 `DEFAULT_PROTOCOL_RULES`；显式写 `[]` 仍表示该协议不收任何模型。
+- 分流路由被清空时直接删除，不再写出空路由（llm-pi-ai 会拒绝：`provider "…" resolves no models`）。该次写入被整体拒绝，配置未受影响。

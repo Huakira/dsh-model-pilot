@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { loadPiAiCatalog, type CatalogIndex } from "./catalog.js";
 import { matchModel } from "./matcher.js";
-import { routeProtocol, compatFor, normalizeRules, protocolByRules } from "./protocol.js";
+import { routeProtocol, compatFor, normalizeRules, protocolByRules, DEFAULT_PROTOCOL_RULES } from "./protocol.js";
 import { planProtocolSplit, shardRoute } from "./split.js";
 import { Writer, readProviders, extractSupportedProtocols, PI_AI_NS } from "./writer.js";
 import { fetchGeminiListing, probeModel, probeProtocolEndpoint, GEMINI_DEFAULT_INPUT } from "./fetchers.js";
@@ -49,9 +49,9 @@ export const Config = Schema.object({
   backupKeep: Schema.natural().min(1).default(10),
   autoProtocolSplit: Schema.boolean().default(true),
   protocolRules: Schema.object({
-    responses: Schema.array(Schema.string()),
-    anthropic: Schema.array(Schema.string()),
-  }),
+    responses: Schema.array(Schema.string()).default([...DEFAULT_PROTOCOL_RULES.responses]),
+    anthropic: Schema.array(Schema.string()).default([...DEFAULT_PROTOCOL_RULES.anthropic]),
+  }).default({ ...DEFAULT_PROTOCOL_RULES }),
 });
 
 interface PilotConfig {
@@ -426,7 +426,10 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
           for (const sid of Object.keys(next)) {
             if (!sid.startsWith(`${routeId}-`) || plan.shards[sid]) continue;
             if (!/-(anthropic-messages|openai-completions|openai-responses|gemini)$/.test(sid)) continue;
-            next[sid] = { ...next[sid], models: (next[sid].models ?? []).filter((m) => keepOnShard(sid, m.id)) };
+            const left = (next[sid].models ?? []).filter((m) => keepOnShard(sid, m.id));
+            // pi-ai rejects a route with no models: drop an emptied shard.
+            if (left.length === 0) delete next[sid];
+            else next[sid] = { ...next[sid], models: left };
           }
           for (const [sid, carried] of Object.entries(plan.shards)) {
             const existing = next[sid]?.models ?? [];
