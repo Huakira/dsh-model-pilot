@@ -24,9 +24,9 @@ Hand-writing DSH's `cordis.patch.yml` model config is error-prone: inflated cont
 ## Install
 
 ```bash
-dsh plugin --profile web add @huakira/model-pilot
+dsh plugin --profile web add @huakirax/model-pilot
 # or pin a version
-dsh plugin --profile web add @huakira/model-pilot@0.1.0
+dsh plugin --profile web add @huakirax/model-pilot@0.1.0
 ```
 
 Restart DSH, then open **Settings → Model Pilot**. Requires DSH ≥ 0.2.2-rc.1; the plugin self-checks its seams at boot and degrades with a visible notice instead of crashing the profile.

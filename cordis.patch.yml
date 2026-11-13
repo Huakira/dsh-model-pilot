@@ -4,4 +4,4 @@
 # `/plugins/dsh-model-pilot/client.js`.
 - insert:
     - id: dsh-model-pilot
-      name: @huakira/model-pilot
+      name: @huakirax/model-pilot
