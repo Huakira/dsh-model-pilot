@@ -37,13 +37,13 @@ dsh-model-pilot 把这些交给一个**多源能力匹配器**：以 pi-ai 内�
 从 GitHub 直装（推荐）：
 
 ```bash
-dsh plugin --profile web install @huakira/model-pilot
+dsh plugin --profile web add @huakira/model-pilot
 ```
 
 或指定版本：
 
 ```bash
-dsh plugin --profile web install @huakira/model-pilot#v0.1.0
+dsh plugin --profile web add @huakira/model-pilot@0.1.0
 ```
 
 装完重启 DSH，在 **设置 → 模型领航** 打开页面。
