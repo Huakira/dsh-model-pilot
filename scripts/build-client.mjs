@@ -21,7 +21,7 @@ const result = await build({
 
 const code = result.outputFiles[0].text;
 const wrapped = `window.__ModuleLoader__.load({
-\tid: "dsh-model-pilot",
+\tid: "@huakirax/dsh-model-pilot",
 \tfactory: (require) => {
 \t\tvar module = { exports: {} };
 \t\tvar exports = module.exports;
