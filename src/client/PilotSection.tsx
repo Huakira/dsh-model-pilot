@@ -13,6 +13,7 @@ import { Modal } from "./Modal.js";
 
 /** Short, human label for a capability source (shown as a model badge). */
 const PROTOCOLS = ["openai-completions", "openai-responses", "anthropic-messages", "gemini"];
+const EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export function PilotSection(_props: { close?: () => void }): React.ReactElement {
   const [state, setState] = useState<StateResponse | null>(null);
@@ -227,6 +228,15 @@ function OptionsPanel({ state, busy, run }: { state: StateResponse | null; busy:
             <input style={styles.input} type="number" min={1} value={Number(local.backupKeep ?? 10)} onChange={(e) => set("backupKeep", Number(e.target.value))} />
           </label>
         </div>
+        <label style={{ ...styles.field, marginTop: 8 }}>
+          <span style={styles.label}>{t("defaultEffort")}</span>
+          <select style={styles.input} value={String(local.defaultEffort ?? "high")} onChange={(e) => set("defaultEffort", e.target.value)}>
+            {EFFORT_LEVELS.map((level) => (
+              <option key={level} value={level}>{level}</option>
+            ))}
+          </select>
+          <div style={styles.muted}>{t("defaultEffortHint")}</div>
+        </label>
         <label style={{ ...styles.field, marginTop: 8 }}>
           <span style={styles.label}>{t("autoProtocolSplit")}</span>
           <input type="checkbox" checked={local.autoProtocolSplit !== false} onChange={(e) => set("autoProtocolSplit", e.target.checked)} />

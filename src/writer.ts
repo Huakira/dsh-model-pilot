@@ -10,11 +10,15 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
   Backup,
+  EffortLevel,
   Modality,
+  ModelCapability,
   ModelCompat,
   ProviderRoute,
+  ReasoningEfforts,
   SettingsDescriptor,
   SettingsSeam,
+  StoredModel,
 } from "./types.js";
 import {
   allOfferedCompatFields,
@@ -22,6 +26,7 @@ import {
   offeredCompatFields,
   type CompatGates,
 } from "./adapter-gates.js";
+import { ensureUniversalEfforts } from "./protocol.js";
 
 export const PI_AI_NS = "llm-pi-ai";
 
@@ -255,6 +260,23 @@ export function sanitizeReasoningEfforts(
 ): { providers: Record<string, ProviderRoute>; stripped: string[] } {
   const stripped: string[] = [];
   const next: Record<string, ProviderRoute> = {};
+  const cleanMap = (re: ReasoningEfforts): ReasoningEfforts | false => {
+    const out: Record<string, string | null> = {};
+    // A YAML 1.1 round-trip reads the bare key `off` as boolean false and writes it
+    // back as the string key "false", which the adapter schema then rejects (the whole
+    // llm-pi-ai entry stops activating). Treat "false" as "off" so any rewrite heals it.
+    const entries = Object.entries(re).map(([k, v]) => [k === "false" ? "off" : k, v] as const);
+    for (const [k, v] of entries) {
+      if (!allowed.has(k)) { if (!stripped.includes(k)) stripped.push(k); continue; }
+      if (k === "off") {
+        if (typeof v === "string" || v === null) out[k] = v;
+      } else if (typeof v === "string" && v.length > 0) {
+        out[k] = v;
+      }
+    }
+    const hasBeyondOff = Object.keys(out).some((k) => k !== "off");
+    return hasBeyondOff ? out : false;
+  };
   for (const [route, profile] of Object.entries(providers)) {
     const p: ProviderRoute = { ...profile };
     if (Array.isArray(p.models)) {
@@ -262,26 +284,79 @@ export function sanitizeReasoningEfforts(
         const re = m.reasoningEfforts;
         if (re === false || re === undefined) return m; // disabled | inherited
         if (re === null || typeof re !== "object") return { ...m, reasoningEfforts: false };
-        const out: Record<string, string | null> = {};
-        // A YAML 1.1 round-trip reads the bare key `off` as boolean false and writes it
-        // back as the string key "false", which the adapter schema then rejects (the whole
-        // llm-pi-ai entry stops activating). Treat "false" as "off" so any rewrite heals it.
-        const entries = Object.entries(re).map(([k, v]) => [k === "false" ? "off" : k, v] as const);
-        for (const [k, v] of entries) {
-          if (!allowed.has(k)) { if (!stripped.includes(k)) stripped.push(k); continue; }
-          if (k === "off") {
-            if (typeof v === "string" || v === null) out[k] = v;
-          } else if (typeof v === "string" && v.length > 0) {
-            out[k] = v;
-          }
-        }
-        const hasBeyondOff = Object.keys(out).some((k) => k !== "off");
-        return { ...m, reasoningEfforts: hasBeyondOff ? out : false };
+        return { ...m, reasoningEfforts: cleanMap(re) };
       });
+    }
+    if (p.modelOverrides && typeof p.modelOverrides === "object") {
+      const overrides: ProviderRoute["modelOverrides"] = {};
+      for (const [id, override] of Object.entries(p.modelOverrides)) {
+        const re = (override as ModelCapability).reasoningEfforts;
+        if (re === undefined || re === false || re === null || typeof re !== "object") {
+          overrides[id] = override as ModelCapability;
+          continue;
+        }
+        overrides[id] = { ...(override as ModelCapability), reasoningEfforts: cleanMap(re) };
+      }
+      p.modelOverrides = overrides;
     }
     next[route] = p;
   }
   return { providers: next, stripped };
+}
+
+/**
+ * Enforce the effort policy at write time (user rule, 2026-11-15): every
+ * reasoning model carries an explicit ladder with the universal off/high pair
+ * (no "default" level), and every route without its own default effort gets
+ * one so the model picker materializes a concrete level instead of the
+ * provider-default pseudo-entry. Additive and idempotent: an explicit route
+ * default wins over the option; `false` ladders (explicitly non-reasoning)
+ * are untouched; nothing is removed except the "default" level itself.
+ */
+export function enforceEffortPolicy(
+  providers: Record<string, ProviderRoute>,
+  defaultEffort: string | undefined,
+): { providers: Record<string, ProviderRoute>; changedRoutes: string[] } {
+  const changedRoutes: string[] = [];
+  const next: Record<string, ProviderRoute> = {};
+  for (const [routeId, profile] of Object.entries(providers)) {
+    const p: ProviderRoute = { ...profile };
+    let changed = false;
+    if (defaultEffort && p.reasoning === undefined && p.reasoning !== null) {
+      p.reasoning = defaultEffort as EffortLevel;
+      changed = true;
+    }
+    const ensureModel = (m: StoredModel): StoredModel => {
+      const re = m.reasoningEfforts;
+      if (re === false || re === undefined || re === null || typeof re !== "object") return m;
+      const ensured = ensureUniversalEfforts(re);
+      if (JSON.stringify(ensured) === JSON.stringify(re)) return m;
+      changed = true;
+      return { ...m, reasoningEfforts: ensured };
+    };
+    if (Array.isArray(p.models)) p.models = p.models.map(ensureModel);
+    if (p.modelOverrides && typeof p.modelOverrides === "object") {
+      const overrides: Record<string, Partial<ModelCapability>> = {};
+      for (const [id, override] of Object.entries(p.modelOverrides)) {
+        const re = (override as ModelCapability).reasoningEfforts;
+        if (re === undefined || re === false || re === null || typeof re !== "object") {
+          overrides[id] = override as Partial<ModelCapability>;
+          continue;
+        }
+        const ensured = ensureUniversalEfforts(re);
+        if (JSON.stringify(ensured) === JSON.stringify(re)) {
+          overrides[id] = override as Partial<ModelCapability>;
+          continue;
+        }
+        changed = true;
+        overrides[id] = { ...(override as ModelCapability), reasoningEfforts: ensured };
+      }
+      p.modelOverrides = overrides;
+    }
+    if (changed) changedRoutes.push(routeId);
+    next[routeId] = p;
+  }
+  return { providers: next, changedRoutes };
 }
 
 /**
@@ -335,6 +410,11 @@ export interface WriterOptions {
   log?: (msg: string) => void;
   /** Per-protocol compat gates (defaults to the installed adapter's gates). */
   compatGates?: CompatGates;
+  /**
+   * Default effort written onto routes that do not set one (effort policy).
+   * Undefined skips the route default; model ladders are still normalized.
+   */
+  defaultEffort?: string;
 }
 
 export class Writer {
@@ -348,6 +428,11 @@ export class Writer {
     this.maxRetries = opts.maxRetries ?? 3;
     this.log = opts.log ?? (() => {});
     this.loadBackups();
+  }
+
+  /** Update the route default effort used by later writes (options panel). */
+  setDefaultEffort(level: string | undefined): void {
+    this.opts.defaultEffort = level;
   }
 
   private loadBackups(): void {
@@ -431,6 +516,11 @@ export class Writer {
       if (result.stripped.length > 0) {
         this.log(`stripped unsupported reasoningEffort levels: ${result.stripped.join(", ")} (adapter accepts: ${[...allowedEfforts].join(", ")})`);
       }
+    }
+    const policy = enforceEffortPolicy(payload, this.opts.defaultEffort);
+    payload = policy.providers;
+    if (policy.changedRoutes.length > 0) {
+      this.log(`effort policy applied (route defaults / universal off+high): ${policy.changedRoutes.join(", ")}`);
     }
 
     let attempt = 0;

@@ -189,6 +189,49 @@ export function familyReasons(id: string): boolean {
 }
 
 /**
+ * The universal minimum effort pair (user rule, 2026-11-15): every model the
+ * plugin writes must offer explicit levels, and when the effort data cannot be
+ * matched at all the ladder is exactly `off` + `high`. `off: null` dispatches
+ * by omitting the reasoning option — byte-for-byte the unspecified request, so
+ * it is safe to offer on every model — and `high` is the standard spelling the
+ * route default resolves against.
+ */
+export const UNIVERSAL_EFFORTS: ReasoningEfforts = { off: null, high: "high" };
+
+/** pi-ai's canonical thinking levels in escalation order (stable output). */
+const EFFORT_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * Enforce the plugin's effort policy on one matched ladder:
+ *  - a `default` level never survives (the picker must never offer a
+ *    provider-default pseudo-level through real data);
+ *  - `off` and `high` are guaranteed present so the route default effort
+ *    resolves on every reasoning model;
+ *  - the YAML 1.1 round-trip artifact key "false" is healed back to "off";
+ *  - output is canonically ordered for stable config writes.
+ * Explicit non-reasoning (`false`) never enters here — the caller keeps it.
+ */
+export function ensureUniversalEfforts(map: ReasoningEfforts): ReasoningEfforts {
+  const kept = new Map<string, string | null>();
+  for (const [rawLevel, wire] of Object.entries(map)) {
+    const level = rawLevel === "false" ? "off" : rawLevel;
+    if (level === "default") continue;
+    if (kept.has(level) && level !== "off") continue; // first spelling wins
+    kept.set(level, wire);
+  }
+  if (!kept.has("off")) kept.set("off", null);
+  if (!kept.has("high")) kept.set("high", "high");
+  const out: ReasoningEfforts = {};
+  for (const level of EFFORT_ORDER) {
+    if (kept.has(level)) out[level] = kept.get(level) as string | null;
+  }
+  for (const [level, wire] of kept) {
+    if (!(level in out)) out[level] = wire;
+  }
+  return out;
+}
+
+/**
  * Build the compat block for a model on a route. Only sets fields the installed
  * pi-ai schema is known to accept; the writer additionally strips unknown keys
  * against the live schema before writing (version gating).

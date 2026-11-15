@@ -320,3 +320,25 @@ const shard = next[sid] ?? { displayName, api, baseURL, apiKeyEnv };
 
 - 0.1.23 上线后实测：schema 里 `protocolRules` 两个数组没写默认值，DSH 解析配置时得到空表，规则全不命中，刷新会把 Claude 也收回父路由。现在 schema 默认值等于 `DEFAULT_PROTOCOL_RULES`；显式写 `[]` 仍表示该协议不收任何模型。
 - 分流路由被清空时直接删除，不再写出空路由（llm-pi-ai 会拒绝：`provider "…" resolves no models`）。该次写入被整体拒绝，配置未受影响。
+
+## 0.1.26 — 思考强度策略：不准留 Default，匹配不上给 off+high（2026-11-15）
+
+用户规则：模型选择器里任何模型都不准停在「Default」（provider 默认行为的伪档）；匹配不上思考强度的模型给最通用的 Off + High 两档。
+
+### 根因
+选择器的 "Default" 伪档来自 `dsh-client-ui-model-selection`：`reasoning.defaultEffort === undefined` 时会在档位列表前插入 `effort.providerDefault` 项。`defaultEffort` 是 **route 级**字段（`llm-pi-ai.providers.<route>.reasoning`，modelFields 没有这一项），三条 axon 路由都没写 → 每个 reasoning 模型都带 Default 伪档。另外匹配不上的模型此前落到 `reasoningEfforts: false`（无档位菜单）或缺档梯子（qwen3.8-flash 无 off/high、muse-spark 无 off）。
+
+### 实现
+- `src/protocol.ts`：`UNIVERSAL_EFFORTS = { off: null, high: "high" }`；`ensureUniversalEfforts()`——剥掉 `default` 档（以及 YAML 1.1 回读伪键 `false`→off）、保证 off+high 存在、按 canonical 顺序输出；未知档位保留不剥（写路径按 live schema 过滤）。off:null 派发时等于"不发 reasoning 参数"，对任何模型都安全（MiniMax m3.1-flash "总是思考、发 none 会 400" 指的是值，off=null 是省略参数，不会 400）。
+- `src/matcher.ts`：家族默认的 `false` 改为"无家族知识"（不再是"不会推理"）——家族 false + 无源数据 → UNIVERSAL_EFFORTS；来源显式 `reasoning:false`（catalog `reasoning===false` / models.dev `reasoning:false`）仍然胜出写 `false`；合并完成后所有 reasoning 梯子过 `ensureUniversalEfforts`。
+- `src/writer.ts`：新增 `enforceEffortPolicy(providers, defaultEffort)`——① 路由无 `reasoning` 字段时写入选项值（显式设置的路由尊重不动）；② 所有 models[] 与 modelOverrides 的梯子过 `ensureUniversalEfforts`（false 不动）；幂等，返回 changedRoutes。`writeProviders` 在 `sanitizeReasoningEfforts` 之后调用（新增的 off/high 都是 canonical 键，不会被剥）。`sanitizeReasoningEfforts` 顺带把 modelOverrides 纳入 allowed-key 过滤（此前只处理 models[]，是个缺口）。
+- `src/index.ts`：新选项 `defaultEffort`（schema union off..max，默认 "high"），/options 持久化 + `writer.setDefaultEffort()` 热更新；**启动一次性归一化**——boot 时 `enforceEffortPolicy` diff 现有 providers，有变化才走 `writeProviders`（带快照/回滚），所以装完重启就生效，不用等刷新；覆盖保存路径也过 `ensureUniversalEfforts`（否则用户覆盖一个缺 high 的梯子会让 Default 伪档回来）。
+- 客户端：选项区新增「路由默认思考档位」下拉（off/minimal/low/medium/high/xhigh/max，默认 high）+ 中英文案。
+
+### 语义边界（重要）
+- 梯子缺 route 默认档的模型（用户手工覆盖、或手工路由）仍会显示 Default 伪档——覆盖是显式意图，插件不回改；文案已说明可用逐行覆盖补档。
+- `false`（显式不会推理）不变成 off+high：那是"匹配上了：不会推理"。
+- route `reasoning: high` 生效后，会话没选档时**显式发 effort=high**（此前是不发参数）。非推理模型不受影响（无 reasoning 元数据时不 materialize）。
+
+### 测试
+121 全过（新增 `test/effort-policy.test.ts` 16 条：pair 保障、default 剥除、"false" 键治愈、家族 false→pair、显式 false 胜出、route 默认档写入/尊重、幂等、undefined 跳过 route 只归一梯子）。

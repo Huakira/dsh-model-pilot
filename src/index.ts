@@ -13,9 +13,9 @@ import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { loadPiAiCatalog, type CatalogIndex } from "./catalog.js";
 import { matchModel } from "./matcher.js";
-import { routeProtocol, compatFor, normalizeRules, protocolByRules, DEFAULT_PROTOCOL_RULES } from "./protocol.js";
+import { routeProtocol, compatFor, normalizeRules, protocolByRules, DEFAULT_PROTOCOL_RULES, ensureUniversalEfforts } from "./protocol.js";
 import { planProtocolSplit, shardRoute } from "./split.js";
-import { Writer, readProviders, extractSupportedProtocols, PI_AI_NS } from "./writer.js";
+import { Writer, readProviders, extractSupportedProtocols, enforceEffortPolicy, PI_AI_NS } from "./writer.js";
 import { fetchGeminiListing, probeModel, probeProtocolEndpoint, GEMINI_DEFAULT_INPUT } from "./fetchers.js";
 import { ModelsDevSource } from "./modelsdev.js";
 import {
@@ -26,6 +26,7 @@ import {
   type ProviderRoute,
   type StoredModel,
   type ModelCapability,
+  type ReasoningEfforts,
   type MatchInfo,
   type MatchInfoMap,
   type CredentialsSeam,
@@ -52,6 +53,7 @@ export const Config = Schema.object({
     responses: Schema.array(Schema.string()).default([...DEFAULT_PROTOCOL_RULES.responses]),
     anthropic: Schema.array(Schema.string()).default([...DEFAULT_PROTOCOL_RULES.anthropic]),
   }).default({ ...DEFAULT_PROTOCOL_RULES }),
+  defaultEffort: Schema.union(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).default("high"),
 });
 
 interface PilotConfig {
@@ -63,6 +65,7 @@ interface PilotConfig {
   backupKeep: number;
   autoProtocolSplit: boolean;
   protocolRules?: { responses?: string[]; anthropic?: string[] };
+  defaultEffort?: string;
 }
 
 /** Minimal connection fetch seam (structural). */
@@ -114,6 +117,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     backupKeep: config.backupKeep ?? 10,
     autoProtocolSplit: config.autoProtocolSplit ?? true,
     protocolRules: normalizeRules(config.protocolRules),
+    defaultEffort: (config.defaultEffort ?? "high") as PilotOptions["defaultEffort"],
   };
 
   const settings = ctx.settings as SettingsSeam | undefined;
@@ -148,6 +152,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
   const writer = new Writer(settings as SettingsSeam, {
     backupPath: join(stateDir, "backups.json"),
     backupKeep: options.backupKeep,
+    defaultEffort: options.defaultEffort,
     log,
   });
 
@@ -735,6 +740,12 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         delete overrides[key];
       } else {
         const patch = (body.capability ?? {}) as ModelCapability;
+        // Effort policy (user rule, 2026-11-15): an override ladder keeps the
+        // universal off/high pair too — otherwise the route default effort
+        // stops resolving for this model and the "Default" pseudo-level returns.
+        if (patch.reasoningEfforts && typeof patch.reasoningEfforts === "object") {
+          patch.reasoningEfforts = ensureUniversalEfforts(patch.reasoningEfforts as ReasoningEfforts);
+        }
         overrides[key] = { ...overrides[key], ...patch };
       }
       saveOverrides(overrides);
@@ -778,7 +789,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
       const body = await readBody(request);
       // Persist options into the plugin's own settings namespace.
       const patch: Record<string, unknown> = {};
-      for (const key of ["managedRoutes", "probeEnabled", "deleteSync", "autoRefresh", "refreshIntervalHours", "backupKeep", "autoProtocolSplit"] as const) {
+      for (const key of ["managedRoutes", "probeEnabled", "deleteSync", "autoRefresh", "refreshIntervalHours", "backupKeep", "autoProtocolSplit", "defaultEffort"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       if (body.protocolRules !== undefined) patch.protocolRules = normalizeRules(body.protocolRules);
@@ -787,6 +798,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         await settings!.update(name, patch, descriptor?.revision);
       }
       Object.assign(options, patch);
+      if (typeof options.defaultEffort === "string") writer.setDefaultEffort(options.defaultEffort);
       return json({ ok: true, options });
     }),
   });
@@ -832,4 +844,26 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
   void sourcesReady
     .catch((error) => warn(`source initialization failed: ${String(error)}`))
     .then(() => log(`host applied (seams: ${JSON.stringify(seams)})`));
+
+  // One-time effort-policy normalization on boot (user rule, 2026-11-15):
+  // routes get a default effort where none is set and stored ladders gain the
+  // universal off/high pair, so the picker never shows a "Default"
+  // pseudo-level even before the first refresh. Idempotent — writes only when
+  // something would change — and fully backed by the writer's snapshot/undo.
+  if (seams.settings) {
+    void (async () => {
+      try {
+        const { providers } = readProviders(settings as SettingsSeam);
+        const { providers: next, changedRoutes } = enforceEffortPolicy(
+          structuredClone(providers),
+          options.defaultEffort,
+        );
+        if (changedRoutes.length === 0) return;
+        await writer.writeProviders(next, `effort policy boot normalize (${changedRoutes.join(", ")})`);
+        log(`effort policy normalized on boot: ${changedRoutes.join(", ")}`);
+      } catch (error) {
+        warn(`boot effort-policy normalization failed: ${String(error)}`);
+      }
+    })();
+  }
 }

@@ -31,9 +31,11 @@ export type Modality = "text" | "image" | "audio" | "video" | "pdf";
  */
 export type ReasoningEfforts = Record<string, string | null>;
 
+/** A reasoning effort level pi-ai offers (route default + model ladders). */
+export type EffortLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
 /** Per-model compat flags we may set. Subset of pi-ai's compatProfile. */
-export interface ModelCompat {
-  thinkingFormat?: string;
+export interface ModelCompat {  thinkingFormat?: string;
   supportsReasoningEffort?: boolean;
   supportsDeveloperRole?: boolean;
   requiresReasoningContentOnAssistantMessages?: boolean;
@@ -83,6 +85,8 @@ export interface ProviderRoute {
   api?: Protocol;
   baseURL?: string;
   apiKeyEnv?: string;
+  /** Route default effort; when unset the picker shows a "Default" pseudo-level. */
+  reasoning?: EffortLevel;
   models?: StoredModel[];
   modelOverrides?: Record<string, Partial<ModelCapability>>;
   defaultContextWindow?: number;
@@ -180,6 +184,12 @@ export interface PilotOptions {
   autoProtocolSplit: boolean;
   /** User routing rules: patterns sent to Responses / Anthropic; others stay. */
   protocolRules: { responses: string[]; anthropic: string[] };
+  /**
+   * Default effort written onto provider routes that do not set one, so the
+   * model picker materializes a concrete level instead of the "Default"
+   * pseudo-entry. Models whose ladder lacks this level keep showing it.
+   */
+  defaultEffort: EffortLevel;
 }
 
 export const DEFAULT_OPTIONS: PilotOptions = {
@@ -195,4 +205,5 @@ export const DEFAULT_OPTIONS: PilotOptions = {
     responses: ["gpt-*", "chatgpt*", "o1*", "o3*", "o4*", "grok*", "muse-*", "longcat*"],
     anthropic: ["claude*"],
   },
+  defaultEffort: "high",
 };

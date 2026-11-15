@@ -16,6 +16,8 @@ import {
   familyOf,
   suggestProtocol,
   baseModelId,
+  ensureUniversalEfforts,
+  UNIVERSAL_EFFORTS,
 } from "./protocol.js";
 import type {
   CapabilitySource,
@@ -63,11 +65,16 @@ export function matchModel(inputs: MatchInputs): MatchResult {
   const sources: CapabilitySource[] = [];
   const matchedProviders: string[] = [];
 
-  // 1. Family defaults (lowest priority base).
+  // 1. Family defaults (lowest priority base). A `false` from defaultEfforts
+  //    means "no family knowledge", not "cannot reason": an unknown family
+  //    must still land on the universal off/high pair instead of hiding the
+  //    effort menu, so the family value is left unset here and only a source
+  //    that explicitly reports the model as non-reasoning asserts `false`.
+  const familyEfforts = defaultEfforts(id);
   let cap: ModelCapability = {
     input: ["text"] as Modality[],
-    reasoningEfforts: defaultEfforts(id),
     compat: compatFor(id, protocol),
+    ...(familyEfforts !== false ? { reasoningEfforts: familyEfforts } : {}),
   };
   sources.push("family-default");
 
@@ -151,6 +158,16 @@ function overlaySanitized(under: ModelCapability, over: ModelCapability): ModelC
   }
   return overlay(under, md);
 }
+
+  // 5. Effort policy (user rule, 2026-11-15): no model keeps a "default"
+  //    thinking level, and a model whose efforts cannot be matched must not
+  //    hide the menu either — it lands on the universal off/high pair. A
+  //    source that explicitly reported the model as non-reasoning still wins.
+  if (cap.reasoningEfforts === undefined) {
+    cap.reasoningEfforts = { ...UNIVERSAL_EFFORTS };
+  } else if (cap.reasoningEfforts !== false) {
+    cap.reasoningEfforts = ensureUniversalEfforts(cap.reasoningEfforts);
+  }
 
   // Confidence = the best source that contributed, capped by agreement.
   const confidence = sources.reduce((best, s) => Math.max(best, SOURCE_CONFIDENCE[s]), 0);
