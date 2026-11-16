@@ -22,6 +22,7 @@ import { ExternalSource } from "./external-source.js";
 import {
   DEFAULT_OPTIONS,
   type ListingRow,
+  type Modality,
   type PilotOptions,
   type Protocol,
   type ProviderRoute,
@@ -244,7 +245,48 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
       return rows.map((r) => ({ ...r, inputModalities: r.inputModalities ?? GEMINI_DEFAULT_INPUT }));
     }
     if (!llm) throw new Error("llm discovery seam unavailable");
-    return llm.discoverModels(PI_AI_NS, { baseURL: route.baseURL, api, apiKey }, signal);
+    const rows = await llm.discoverModels(PI_AI_NS, { baseURL: route.baseURL, api, apiKey }, signal);
+    return enrichWithGatewayCards(rows, route.baseURL ?? "", apiKey, signal);
+  }
+
+  /**
+   * Gateways such as AxonHub/OpenRouter publish a model card per id on `/v1/models`
+   * (`context_length`, `max_output_tokens`, `modalities.input`, `capabilities`).
+   * discoverModels only keeps ids, so re-read the listing and attach the card.
+   * Best effort: any failure leaves the rows untouched.
+   */
+  async function enrichWithGatewayCards(
+    rows: ListingRow[],
+    baseURL: string,
+    apiKey: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<ListingRow[]> {
+    if (!baseURL) return rows;
+    try {
+      const url = `${baseURL.replace(/\/+$/, "").replace(/\/v1$/, "")}/v1/models`;
+      const res = await fetch(url, {
+        headers: apiKey ? { authorization: `Bearer ${apiKey}`, "x-api-key": apiKey } : {},
+        signal: signal ?? AbortSignal.timeout(15000),
+      });
+      if (!res.ok) return rows;
+      const body = (await res.json()) as { data?: Array<Record<string, any>> };
+      const cards = new Map((body.data ?? []).map((m) => [String(m.id), m]));
+      return rows.map((row) => {
+        const card = cards.get(row.id);
+        if (!card || typeof card.context_length !== "number") return row;
+        const kinds = (card.modalities?.input ?? []).filter((k: string) => k === "text" || k === "image") as Modality[];
+        const input: Modality[] = kinds.includes("image") || card.capabilities?.vision === true ? ["text", "image"] : kinds;
+        return {
+          ...row,
+          contextWindow: card.context_length,
+          ...(typeof card.max_output_tokens === "number" ? { maxTokens: card.max_output_tokens } : {}),
+          ...(input.length > 0 ? { inputModalities: input } : {}),
+          gatewayCard: true,
+        };
+      });
+    } catch {
+      return rows;
+    }
   }
 
   /**
@@ -296,9 +338,20 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         catalog,
         modelsDev: (mid) => modelsDev.lookup(mid),
         modelsDevBase: (mid) => modelsDev.lookupBase(mid),        routeProtocol: protocol,
-        external: options.externalSource.enabled
-          ? (mid) => externalSource.lookup(route.baseURL ?? "", protocol, mid)
-          : undefined,
+        // A gateway card on the listing row is authoritative for that gateway, so it
+        // is overlaid last (like the external table) and outranks catalog/models.dev.
+        external: (mid) => {
+          const ext = options.externalSource.enabled
+            ? externalSource.lookup(route.baseURL ?? "", protocol, mid)
+            : undefined;
+          if (!row.gatewayCard || mid !== row.id) return ext;
+          return {
+            ...ext,
+            ...(row.contextWindow !== undefined ? { contextWindow: row.contextWindow } : {}),
+            ...(row.maxTokens !== undefined ? { maxTokens: row.maxTokens } : {}),
+            ...(row.inputModalities ? { input: row.inputModalities } : {}),
+          };
+        },
       });
       const cap = match.capability;
       matchinfo[row.id] = { sources: match.sources, confidence: match.confidence, baseIdUsed: match.baseIdUsed };

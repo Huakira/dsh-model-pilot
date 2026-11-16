@@ -113,6 +113,10 @@ export interface ListingRow {
   contextWindow?: number;
   maxTokens?: number;
   inputModalities?: Modality[];
+  /** True when contextWindow/maxTokens/inputModalities came from the gateway's own
+   *  model card (`context_length`, `max_output_tokens`, `modalities.input`) and are
+   *  therefore authoritative for that gateway. */
+  gatewayCard?: boolean;
 }
 
 /** A backup snapshot of the llm-pi-ai providers section. */
