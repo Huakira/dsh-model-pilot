@@ -493,6 +493,10 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
           const listedIds = new Set(listing.map((r) => r.id));
           const keepOnShard = (sid: string, id: string) => {
             const mv = prevMoves[`${routeId}/${id}`];
+            // Retired upstream: it came from the parent listing (a moves entry exists)
+            // but the gateway no longer advertises it, so deleteSync drops it from the
+            // shard too, even when it had been moved there by hand.
+            if (options.deleteSync && mv && mv.to === sid && !listedIds.has(id)) return false;
             if (mv && mv.auto !== true && mv.to === sid) return true;
             return !listedIds.has(id);
           };
