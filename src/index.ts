@@ -18,6 +18,7 @@ import { planProtocolSplit, shardRoute } from "./split.js";
 import { Writer, readProviders, extractSupportedProtocols, enforceEffortPolicy, PI_AI_NS } from "./writer.js";
 import { fetchGeminiListing, probeModel, probeProtocolEndpoint, GEMINI_DEFAULT_INPUT } from "./fetchers.js";
 import { ModelsDevSource } from "./modelsdev.js";
+import { ExternalSource } from "./external-source.js";
 import {
   DEFAULT_OPTIONS,
   type ListingRow,
@@ -54,6 +55,10 @@ export const Config = Schema.object({
     anthropic: Schema.array(Schema.string()).default([...DEFAULT_PROTOCOL_RULES.anthropic]),
   }).default({ ...DEFAULT_PROTOCOL_RULES }),
   defaultEffort: Schema.union(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).default("high"),
+  externalSource: Schema.object({
+    enabled: Schema.boolean().default(false),
+    path: Schema.string().default(""),
+  }).default({ enabled: false, path: "" }),
 });
 
 interface PilotConfig {
@@ -66,6 +71,7 @@ interface PilotConfig {
   autoProtocolSplit: boolean;
   protocolRules?: { responses?: string[]; anthropic?: string[] };
   defaultEffort?: string;
+  externalSource?: { enabled?: boolean; path?: string };
 }
 
 /** Minimal connection fetch seam (structural). */
@@ -118,6 +124,10 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
     autoProtocolSplit: config.autoProtocolSplit ?? true,
     protocolRules: normalizeRules(config.protocolRules),
     defaultEffort: (config.defaultEffort ?? "high") as PilotOptions["defaultEffort"],
+    externalSource: {
+      enabled: config.externalSource?.enabled ?? false,
+      path: config.externalSource?.path ?? "",
+    },
   };
 
   const settings = ctx.settings as SettingsSeam | undefined;
@@ -161,6 +171,8 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
   let supportedProtocols: string[] | undefined;
   const modelsDev = new ModelsDevSource(join(stateDir, "modelsdev-cache.json"));
   let modelsDevStatus: { ok: boolean; source: string; error?: string } = { ok: false, source: "none" };
+  const externalSource = new ExternalSource(log);
+  externalSource.configure(options.externalSource.enabled ? options.externalSource.path : undefined);
 
   const sourcesReady = (async () => {
     try {
@@ -284,6 +296,9 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         catalog,
         modelsDev: (mid) => modelsDev.lookup(mid),
         modelsDevBase: (mid) => modelsDev.lookupBase(mid),        routeProtocol: protocol,
+        external: options.externalSource.enabled
+          ? (mid) => externalSource.lookup(route.baseURL ?? "", protocol, mid)
+          : undefined,
       });
       const cap = match.capability;
       matchinfo[row.id] = { sources: match.sources, confidence: match.confidence, baseIdUsed: match.baseIdUsed };
@@ -531,6 +546,7 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         catalogError,
         supportedProtocols: supportedProtocols ?? ["openai-completions", "openai-responses", "anthropic-messages"],
         modelsDev: { ok: modelsDevStatus.ok, source: modelsDevStatus.source, fetchedAt: modelsDev.fetchedAt },
+        externalSource: externalSource.status,
         options,
         revision,
         providers: masked,
@@ -793,12 +809,23 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       if (body.protocolRules !== undefined) patch.protocolRules = normalizeRules(body.protocolRules);
+      if (body.externalSource !== undefined && typeof body.externalSource === "object" && body.externalSource !== null) {
+        const es = body.externalSource as { enabled?: unknown; path?: unknown };
+        patch.externalSource = {
+          enabled: Boolean(es.enabled),
+          path: typeof es.path === "string" ? es.path : "",
+        };
+      }
       if (seams.settings) {
         const descriptor = settings!.describe().find((d) => d.ns === name);
         await settings!.update(name, patch, descriptor?.revision);
       }
       Object.assign(options, patch);
       if (typeof options.defaultEffort === "string") writer.setDefaultEffort(options.defaultEffort);
+      if (patch.externalSource) {
+        const es = patch.externalSource as { enabled: boolean; path: string };
+        externalSource.configure(es.enabled ? es.path : undefined);
+      }
       return json({ ok: true, options });
     }),
   });

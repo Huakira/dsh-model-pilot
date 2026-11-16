@@ -243,8 +243,43 @@ function OptionsPanel({ state, busy, run }: { state: StateResponse | null; busy:
           <div style={styles.muted}>{t("autoProtocolSplitHint")}</div>
         </label>
         <RulesEditor rules={local.protocolRules as { responses?: string[]; anthropic?: string[] } | undefined} onChange={(r) => set("protocolRules", r)} />
+        <ExternalSourceEditor
+          value={local.externalSource as { enabled?: boolean; path?: string } | undefined}
+          onChange={(v) => set("externalSource", v)}
+        />
         <button style={styles.btnPrimary} disabled={busy} onClick={() => run(() => api.options(local), t("ok"))}>{t("save")}</button>
       </div>
+    </div>
+  );
+}
+
+function ExternalSourceEditor({
+  value,
+  onChange,
+}: {
+  value?: { enabled?: boolean; path?: string };
+  onChange: (v: { enabled: boolean; path: string }) => void;
+}) {
+  const enabled = Boolean(value?.enabled);
+  const path = value?.path ?? "";
+  return (
+    <div style={{ marginTop: 8 }}>
+      <label style={styles.field}>
+        <span style={styles.label}>{t("externalSource")}</span>
+        <input type="checkbox" checked={enabled} onChange={(e) => onChange({ enabled: e.target.checked, path })} />
+        <div style={styles.muted}>{t("externalSourceHint")}</div>
+      </label>
+      {enabled && (
+        <label style={{ ...styles.field, marginTop: 4 }}>
+          <span style={styles.label}>{t("externalSourcePath")}</span>
+          <input
+            style={{ ...styles.input, width: "100%" }}
+            value={path}
+            onChange={(e) => onChange({ enabled, path: e.target.value })}
+            placeholder="/root/.config/billion-context/providers.shared.json"
+          />
+        </label>
+      )}
     </div>
   );
 }

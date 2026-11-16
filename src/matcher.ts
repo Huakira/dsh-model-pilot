@@ -39,6 +39,13 @@ export interface MatchInputs {
   modelsDevBase?: (id: string) => ModelCapability | undefined;
   /** Route protocol; when set it is authoritative over the family suggestion. */
   routeProtocol?: Protocol;
+  /**
+   * Optional external capability lookup (e.g. a reverse-proxy's own
+   * providers.json). Hand-curated specifically for this deployment's
+   * (possibly gateway-renamed) model ids, so it overlays LAST and outranks
+   * every other source for the fields it declares.
+   */
+  external?: (id: string) => ModelCapability | undefined;
 }
 
 const SOURCE_CONFIDENCE: Record<CapabilitySource, number> = {
@@ -46,6 +53,7 @@ const SOURCE_CONFIDENCE: Record<CapabilitySource, number> = {
   "models.dev": 0.95,
   endpoint: 0.4,
   "family-default": 0.3,
+  external: 1,
 };
 
 /** Merge `over` onto `under`, field by field; undefined fields keep the base. */
@@ -159,7 +167,19 @@ function overlaySanitized(under: ModelCapability, over: ModelCapability): ModelC
   return overlay(under, md);
 }
 
-  // 5. Effort policy (user rule, 2026-11-15): no model keeps a "default"
+  // 5. External table (hand-curated for THIS deployment's ids — outranks
+  //    every public-catalog guess for the fields it declares, e.g. a
+  //    reverse-proxy's providers.json that already knows a gateway-renamed
+  //    model's real context window).
+  if (inputs.external) {
+    const ext = inputs.external(id);
+    if (ext && Object.keys(ext).length > 0) {
+      cap = overlay(cap, ext);
+      sources.push("external");
+    }
+  }
+
+  // 6. Effort policy (user rule, 2026-11-15): no model keeps a "default"
   //    thinking level, and a model whose efforts cannot be matched must not
   //    hide the menu either — it lands on the universal off/high pair. A
   //    source that explicitly reported the model as non-reasoning still wins.

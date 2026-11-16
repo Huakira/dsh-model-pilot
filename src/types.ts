@@ -55,7 +55,7 @@ export interface ModelCapability {
 }
 
 /** Where a matched capability came from, for confidence + UI attribution. */
-export type CapabilitySource = "pi-ai-catalog" | "models.dev" | "endpoint" | "family-default";
+export type CapabilitySource = "pi-ai-catalog" | "models.dev" | "endpoint" | "family-default" | "external";
 
 export interface MatchResult {
   id: string;
@@ -190,6 +190,15 @@ export interface PilotOptions {
    * pseudo-entry. Models whose ladder lacks this level keep showing it.
    */
   defaultEffort: EffortLevel;
+  /**
+   * Optional external capability table (reverse-proxy `providers.json`,
+   * billion-context shape): absolute-URL-keyed `{ models: { id: { context,
+   * output } } }`. When enabled and the file resolves a model, it outranks
+   * both pi-ai-catalog and models.dev for that model — the whole reason this
+   * exists is that gateway-renamed ids are invisible to both public catalogs,
+   * and this file is the one place that already declares the real window.
+   */
+  externalSource: { enabled: boolean; path: string };
 }
 
 export const DEFAULT_OPTIONS: PilotOptions = {
@@ -206,4 +215,5 @@ export const DEFAULT_OPTIONS: PilotOptions = {
     anthropic: ["claude*"],
   },
   defaultEffort: "high",
+  externalSource: { enabled: false, path: "" },
 };
