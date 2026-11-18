@@ -11,11 +11,17 @@
  * for exactly the ids it declares, instead of duplicating the same table a
  * second time inside dsh-model-pilot's own overrides.
  *
- * This loader is intentionally narrow: it only reads `context`/`output` per
- * model under a provider URL key, the two fields a reverse-proxy table is
- * realistically expected to carry. Anything else in the file (compress,
- * renderNone, pinEffort, non-model routing fields, …) is ignored — this is a
- * read-only, best-effort capability hint, never a config merge.
+ * This loader is intentionally narrow: it only reads `context`/`output` and
+ * `reasoningEfforts` per model under a provider URL key, the fields a
+ * reverse-proxy table realistically carries. Anything else in the file
+ * (compress, renderNone, pinEffort, non-model routing fields, …) is ignored —
+ * this is a read-only, best-effort capability hint, never a config merge.
+ *
+ * `reasoningEfforts` is AxonHub's unified effort vocabulary (llm/reasoning.go:
+ * none/minimal/low/medium/high/xhigh/max), written into the shared table by
+ * sync_to_modeldata.py. It is the only place a gateway's own knowledge of a
+ * model's thinking ladder survives: `/v1/models` does not publish it, so
+ * without this the plugin falls back to the universal off+high pair.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { ModelCapability, Protocol } from "./types.js";
@@ -23,8 +29,27 @@ import type { ModelCapability, Protocol } from "./types.js";
 interface ExternalModelEntry {
   context?: number;
   output?: number;
+  /** AxonHub unified effort names; see PI_LEVEL_WIRE. */
+  reasoningEfforts?: unknown;
   [key: string]: unknown;
 }
+
+/**
+ * Pi thinking level -> AxonHub's unified effort spelling. Pi's `off` is
+ * AxonHub's `none`; every other level keeps its name. This is the same table
+ * AxonHub's own pi-config export uses
+ * (frontend/src/features/apikeys/data/pi-models-config.ts), so a gateway card
+ * and a dsh refresh agree on the wire values.
+ */
+const PI_LEVEL_WIRE: Record<string, string> = {
+  off: "none",
+  minimal: "minimal",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "max",
+};
 
 interface ExternalProviderEntry {
   models?: Record<string, ExternalModelEntry>;
@@ -133,6 +158,20 @@ export class ExternalSource {
       const cap: ModelCapability = {};
       if (typeof entry.context === "number" && entry.context > 0) cap.contextWindow = entry.context;
       if (typeof entry.output === "number" && entry.output > 0) cap.maxTokens = entry.output;
+      // Thinking ladder: a declared level keeps its wire spelling, an
+      // undeclared one becomes null (pi hides a null level). The writer drops
+      // the nulls again, so the stored config stays sparse.
+      const efforts = entry.reasoningEfforts;
+      if (Array.isArray(efforts) && efforts.length > 0) {
+        const accepted = new Set(
+          efforts.filter((e): e is string => typeof e === "string").map((e) => e.toLowerCase()),
+        );
+        const map: Record<string, string | null> = {};
+        for (const [level, wire] of Object.entries(PI_LEVEL_WIRE)) {
+          map[level] = accepted.has(wire) ? wire : null;
+        }
+        cap.reasoningEfforts = map;
+      }
       if (Object.keys(cap).length > 0) return cap;
     }
     return undefined;

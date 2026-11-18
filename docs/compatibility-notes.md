@@ -342,3 +342,19 @@ const shard = next[sid] ?? { displayName, api, baseURL, apiKeyEnv };
 
 ### 测试
 121 全过（新增 `test/effort-policy.test.ts` 16 条：pair 保障、default 剥除、"false" 键治愈、家族 false→pair、显式 false 胜出、route 默认档写入/尊重、幂等、undefined 跳过 route 只归一梯子）。
+
+## 0.1.30 — 外部数据源支持思考档位（2026-11-17）
+
+刷新后与 axonhub 的模型参数对不上（例：longcat-2.5 的思考档位只有 off+high，而 axonhub 卡片是 low/high/max/xhigh）。
+
+### 根因
+- axonhub 的 `/v1/models` 不发布思考档位：`OpenAIModel` 结构体（`internal/server/api/openai.go`）根本没有 `reasoningEfforts` 字段，`?include=all` 也只给 context/max/modalities/capabilities/pricing/icon/type。真正的档位只在 axonhub 自己的 `models` 表 `model_card.reasoningEfforts` 里。
+- 插件的档位来源链（家族默认 → pi 目录 → models.dev → 网关卡片 → 外部表）对 longcat 全部落空：`defaultEfforts()` 没有 longcat 分支，pi 目录/models.dev 未收录，网关卡片只读 context/max/modalities/vision，外部表只读 context/output → 落到 `UNIVERSAL_EFFORTS`（off+high）。
+- 手工覆盖 `axonhub-openai-responses/LongCat-2.5`（大写 L）因 id 大小写不匹配从未命中；0.1.29 的 deleteSync 又把这条手调条目当"上游已下线"剪掉了。
+
+### 实现
+- `src/external-source.ts`：外部表的 `reasoningEfforts`（axonhub 统一名 none/minimal/low/medium/high/xhigh/max，由 `sync_to_modeldata.py` 写入共享 providers.json）转成 pi 的 `reasoningEfforts` map。映射表 `PI_LEVEL_WIRE` 与 axonhub 自己的 pi 导出（`frontend/src/features/apikeys/data/pi-models-config.ts`）一致：pi 的 `off` → axonhub `none`，其余同名；声明的照抄，未声明的写 null（pi 隐藏 null 档，writer 的 `sanitizeReasoningEfforts` 再把 null 丢掉，存出来的配置保持稀疏）。
+- `src/matcher.ts` 不用改：external 是最后一层 overlay（置信度 1），`ensureUniversalEfforts` 仍兜住 off+high。
+- `/opt/axonhub/sync_to_modeldata.py`：写 providers.json 时一并写 `reasoningEfforts`；只有非空列表才写（axonhub 说不支持推理的模型不受影响）。cron 每 5 分钟同步。
+- 效果：longcat-2.5 刷完是 `off:null, low, high, xhigh, max`，与 axonhub 卡片一致。
+- 测试 134 全过（`test/external-source.test.ts` 新增 3 条：档位映射、非数组容错、external 盖过 models.dev）。

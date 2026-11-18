@@ -14,6 +14,7 @@ const SAMPLE = {
     models: {
       "glm-5.3-flash-uncensored": { context: 1048576 },
       "hy3": { context: 262144 },
+      "longcat-2.5": { context: 1048576, output: 131072, reasoningEfforts: ["low", "high", "max", "xhigh"] },
     },
   },
   "https://axon.20031014.xyz/v1/messages": {
@@ -78,6 +79,40 @@ describe("ExternalSource", () => {
     });
   });
 
+  it("converts AxonHub's unified effort list into a pi level map", () => {
+    const src = new ExternalSource();
+    src.configure(file);
+    expect(src.lookup("https://axon.20031014.xyz/v1", "openai-completions", "longcat-2.5")).toEqual({
+      contextWindow: 1048576,
+      maxTokens: 131072,
+      // `off` maps to AxonHub's `none`; undeclared levels are null (pi hides them).
+      reasoningEfforts: {
+        off: null,
+        minimal: null,
+        low: "low",
+        medium: null,
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
+    });
+  });
+
+  it("ignores a non-array reasoningEfforts field rather than throwing", () => {
+    writeFileSync(
+      file,
+      JSON.stringify({
+        "https://axon.20031014.xyz/v1": { models: { hy3: { context: 262144, reasoningEfforts: "low" } } },
+      }),
+      "utf-8",
+    );
+    const future = new Date(Date.now() + 5000);
+    utimesSync(file, future, future);
+    const src = new ExternalSource();
+    src.configure(file);
+    expect(src.lookup("https://axon.20031014.xyz/v1", "openai-completions", "hy3")).toEqual({ contextWindow: 262144 });
+  });
+
   it("returns undefined for a model the file does not declare", () => {
     const src = new ExternalSource();
     src.configure(file);
@@ -138,5 +173,39 @@ describe("matchModel with an external source", () => {
     });
     expect(result.capability.contextWindow).toBe(200000);
     expect(result.sources).not.toContain("external");
+  });
+
+  it("lets the external effort list outrank a catalog/models.dev guess", () => {
+    const result = matchModel({
+      id: "longcat-2.5",
+      modelsDev: () => ({ reasoningEfforts: { off: null, high: "high" } }),
+      external: (id) =>
+        id === "longcat-2.5"
+          ? {
+              reasoningEfforts: {
+                off: null,
+                minimal: null,
+                low: "low",
+                medium: null,
+                high: "high",
+                xhigh: "xhigh",
+                max: "max",
+              },
+            }
+          : undefined,
+    });
+    // ensureUniversalEfforts keeps the nulls and the full ladder; it does not
+    // collapse back to the universal off+high pair.
+    expect(result.capability.reasoningEfforts).toEqual({
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    });
+    expect(result.sources).toContain("external");
+    expect(result.sources.indexOf("external")).toBeGreaterThan(result.sources.indexOf("models.dev"));
   });
 });
