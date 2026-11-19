@@ -473,6 +473,9 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
             ? await verifiedProtocols(route.baseURL ?? "", apiKey, candidates)
             : [];
           const allowed: string[] = route.api ? [route.api, ...verified] : verified;
+          // Snapshot before planning: planProtocolSplit forgets auto moves of retired models,
+          // and deleteSync needs those records to recognise them on the shard.
+          const prevMoves = { ...movesAll };
           const plan = planProtocolSplit({
             routeId,
             routeApi: route.api,
@@ -483,7 +486,6 @@ export function apply(ctx: any, config: PilotConfig = {} as PilotConfig): void {
             compatFor,
           });
           models = plan.stay;
-          const prevMoves = { ...movesAll };
           for (const key of Object.keys(movesAll)) delete movesAll[key];
           Object.assign(movesAll, plan.moves);
           // A shard model stays only when the user moved it there by hand, or
